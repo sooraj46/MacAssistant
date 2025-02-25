@@ -17,10 +17,9 @@ class Config:
     DEBUG = False
     TESTING = False
     
-    # LLM configuration
-    LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'openai')
-    OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-    OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4')
+    # Gemini configuration
+    GEMINI_API_KEY = os.environ.get('GOOGLE_API_KEY')  # Using GOOGLE_API_KEY as in the example
+    GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.0-flash-thinking-exp-01-21')  # Default from example
     
     # Logging configuration
     LOG_DIR = os.environ.get('LOG_DIR', 'logs')

@@ -1,25 +1,35 @@
 """
 LLM Integration Module
-Handles communication with the LLM API for plan generation and revision.
+Handles communication with the Gemini LLM API for plan generation and revision.
 """
 
 import os
 import json
-import requests
+import logging
+import google.genai as genai
+import google.genai.types as types
 from config import active_config
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 class LLMIntegration:
-    """Class for integrating with Large Language Models."""
+    """Class for integrating with Google's Gemini Large Language Model."""
     
     def __init__(self):
-        self.provider = active_config.LLM_PROVIDER
-        self.api_key = active_config.OPENAI_API_KEY
-        self.model = active_config.OPENAI_MODEL
+        self.api_key = active_config.GEMINI_API_KEY
+        self.model = active_config.GEMINI_MODEL
+        
+        if not self.api_key:
+            raise ValueError("Missing GEMINI_API_KEY in configuration.")
+        
+        self.client = genai.Client(api_key=self.api_key)
         self.plans = {}  # Store generated plans
         
     def generate_plan(self, user_request):
         """
-        Generate a plan for a user task using the LLM.
+        Generate a plan for a user task using Gemini.
         
         Args:
             user_request (str): The user's request for a task
@@ -35,12 +45,8 @@ class LLMIntegration:
         is clear, concise, and executable on macOS. Return the plan as a list of steps.
         """
         
-        # Send request to LLM
-        if self.provider == 'openai':
-            response = self._call_openai_api(system_prompt, user_request)
-        else:
-            # Implement alternative LLM providers here
-            raise NotImplementedError(f"LLM provider {self.provider} not implemented")
+        # Send request to Gemini
+        response = self._call_gemini_api(system_prompt, user_request)
         
         # Parse the response to extract the plan
         plan = self._parse_plan(response)
@@ -88,12 +94,8 @@ class LLMIntegration:
         Please revise the plan based on this feedback.
         """
         
-        # Send request to LLM
-        if self.provider == 'openai':
-            response = self._call_openai_api(system_prompt, user_message)
-        else:
-            # Implement alternative LLM providers here
-            raise NotImplementedError(f"LLM provider {self.provider} not implemented")
+        # Send request to Gemini
+        response = self._call_gemini_api(system_prompt, user_message)
         
         # Parse the response to extract the revised plan
         revised_plan = self._parse_plan(response)
@@ -106,9 +108,9 @@ class LLMIntegration:
         
         return revised_plan
     
-    def _call_openai_api(self, system_prompt, user_message):
+    def _call_gemini_api(self, system_prompt, user_message):
         """
-        Call the OpenAI API with the given prompts.
+        Call the Gemini API with the given prompts.
         
         Args:
             system_prompt (str): The system prompt
@@ -117,27 +119,24 @@ class LLMIntegration:
         Returns:
             str: The response from the API
         """
-        headers = {
-            'Authorization': f'Bearer {self.api_key}',
-            'Content-Type': 'application/json'
-        }
-        
-        data = {
-            'model': self.model,
-            'messages': [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_message}
-            ]
-        }
-        
-        response = requests.post('https://api.openai.com/v1/chat/completions', 
-                               headers=headers, 
-                               json=data)
-        
-        if response.status_code != 200:
-            raise Exception(f"API request failed with status {response.status_code}: {response.text}")
-        
-        return response.json()['choices'][0]['message']['content']
+        try:
+            # Combine system prompt and user message for Gemini
+            # Gemini doesn't have distinct system/user roles like OpenAI
+            combined_prompt = f"{system_prompt}\n\nUser request: {user_message}"
+            
+            logger.info(f"Sending prompt to Gemini model: {self.model}")
+            
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=[types.Part.from_text(text=combined_prompt)],
+            )
+            
+            # Return raw response text
+            return response.text
+            
+        except Exception as e:
+            logger.exception(f"Error calling Gemini model: {e}")
+            raise Exception(f"API request failed: {str(e)}")
     
     def _parse_plan(self, response):
         """

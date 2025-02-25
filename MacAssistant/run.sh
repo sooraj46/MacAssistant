@@ -31,7 +31,19 @@ fi
 # Create logs directory
 mkdir -p logs
 
+# Determine environment
+ENV=${FLASK_ENV:-development}
+
 # Run the application
-echo "Starting MacAssistant..."
+echo "Starting MacAssistant in $ENV mode..."
 cd backend
-python app.py
+
+if [ "$ENV" = "production" ]; then
+    # Run with gunicorn in production
+    echo "Using production server (gunicorn)..."
+    gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
+else
+    # Run with Flask development server
+    echo "Using development server (Flask)..."
+    python app.py
+fi

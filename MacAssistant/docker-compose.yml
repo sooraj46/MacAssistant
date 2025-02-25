@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  macassistant:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash-thinking-exp-01-21}
+      - LOG_DIR=logs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MAX_EXECUTION_TIME=${MAX_EXECUTION_TIME:-300}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
