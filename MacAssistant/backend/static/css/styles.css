@@ -1,0 +1,433 @@
+/* General Styles */
+:root {
+    --primary-color: #007aff;
+    --secondary-color: #5856d6;
+    --success-color: #34c759;
+    --warning-color: #ff9500;
+    --danger-color: #ff3b30;
+    --light-color: #f2f2f7;
+    --dark-color: #1c1c1e;
+    --text-color: #000000;
+    --text-secondary: #8e8e93;
+    --border-color: #c7c7cc;
+    --background-color: #ffffff;
+    --chat-user-bg: #e1f5fe;
+    --chat-assistant-bg: #f5f5f7;
+    --modal-overlay: rgba(0, 0, 0, 0.5);
+    --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --text-color: #ffffff;
+        --text-secondary: #98989d;
+        --border-color: #38383a;
+        --background-color: #000000;
+        --chat-user-bg: #0a84ff40;
+        --chat-assistant-bg: #2c2c2e;
+        --dark-color: #f2f2f7;
+        --light-color: #1c1c1e;
+    }
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    line-height: 1.6;
+}
+
+.app-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header Styles */
+.app-header {
+    padding: 20px 0;
+    text-align: center;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 20px;
+}
+
+.app-header h1 {
+    font-size: 28px;
+    margin-bottom: 5px;
+}
+
+.app-description {
+    color: var(--text-secondary);
+    font-size: 16px;
+}
+
+/* Main Content */
+.app-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Chat Styles */
+.chat-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--background-color);
+}
+
+.chat-messages {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.message {
+    max-width: 80%;
+    padding: 12px 16px;
+    border-radius: 18px;
+    margin-bottom: 5px;
+    word-wrap: break-word;
+}
+
+.message-user {
+    align-self: flex-end;
+    background-color: var(--primary-color);
+    color: white;
+    border-bottom-right-radius: 5px;
+}
+
+.message-assistant {
+    align-self: flex-start;
+    background-color: var(--chat-assistant-bg);
+    border-bottom-left-radius: 5px;
+}
+
+.message-system {
+    align-self: center;
+    background-color: var(--light-color);
+    color: var(--text-secondary);
+    border-radius: 10px;
+    font-style: italic;
+    font-size: 14px;
+}
+
+.output-block {
+    max-width: 100%;
+    margin-top: 5px;
+    padding: 10px;
+    background-color: var(--dark-color);
+    color: var(--light-color);
+    border-radius: 6px;
+    font-family: monospace;
+    overflow-x: auto;
+    white-space: pre-wrap;
+}
+
+.timestamp {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 5px;
+    display: block;
+}
+
+.chat-input-form {
+    display: flex;
+    padding: 15px;
+    border-top: 1px solid var(--border-color);
+}
+
+.chat-input-form input {
+    flex: 1;
+    padding: 12px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 25px;
+    font-size: 16px;
+    background-color: var(--light-color);
+    color: var(--text-color);
+}
+
+.chat-input-form button {
+    margin-left: 10px;
+    padding: 12px 20px;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 25px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.chat-input-form button:hover {
+    background-color: var(--secondary-color);
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--modal-overlay);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal.show {
+    display: flex;
+}
+
+.modal-content {
+    background-color: var(--background-color);
+    max-width: 600px;
+    width: 90%;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-content h2 {
+    margin-bottom: 15px;
+    color: var(--text-color);
+}
+
+/* Plan Review Styles */
+.plan-steps {
+    margin: 20px 0;
+}
+
+.plan-step {
+    padding: 12px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: flex-start;
+}
+
+.step-number {
+    margin-right: 15px;
+    min-width: 25px;
+    height: 25px;
+    background-color: var(--primary-color);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+}
+
+.step-content {
+    flex: 1;
+}
+
+.step-description {
+    margin-bottom: 5px;
+}
+
+.step-risky {
+    background-color: var(--warning-color);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    display: inline-block;
+    margin-bottom: 5px;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.btn-secondary {
+    background-color: var(--light-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.btn-danger {
+    background-color: var(--danger-color);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.plan-feedback {
+    margin-top: 20px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 20px;
+}
+
+.plan-feedback.hidden {
+    display: none;
+}
+
+.plan-feedback textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    height: 120px;
+    margin-top: 10px;
+    font-family: var(--font-family);
+    background-color: var(--light-color);
+    color: var(--text-color);
+}
+
+/* Risky Command Modal */
+.warning-icon {
+    font-size: 40px;
+    text-align: center;
+    margin: 10px 0;
+}
+
+.warning-text {
+    font-weight: bold;
+    color: var(--danger-color);
+    margin-bottom: 10px;
+}
+
+.code-block {
+    background-color: var(--dark-color);
+    color: var(--light-color);
+    padding: 15px;
+    border-radius: 6px;
+    font-family: monospace;
+    overflow-x: auto;
+    margin-bottom: 15px;
+}
+
+.risk-explanation {
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: var(--warning-color);
+    color: white;
+    border-radius: 6px;
+}
+
+#confirmation-input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-top: 10px;
+    font-family: var(--font-family);
+    background-color: var(--light-color);
+    color: var(--text-color);
+}
+
+/* Utility Classes */
+.hidden {
+    display: none;
+}
+
+.success-text {
+    color: var(--success-color);
+}
+
+.error-text {
+    color: var(--danger-color);
+}
+
+/* Status indicators */
+.status-pending, .status-executing, .status-completed, .status-failed, .status-skipped {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-left: 10px;
+}
+
+.status-pending {
+    background-color: var(--text-secondary);
+    color: white;
+}
+
+.status-executing {
+    background-color: var(--primary-color);
+    color: white;
+    animation: pulse 1.5s infinite;
+}
+
+.status-completed {
+    background-color: var(--success-color);
+    color: white;
+}
+
+.status-failed {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+.status-skipped {
+    background-color: var(--warning-color);
+    color: white;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .message {
+        max-width: 90%;
+    }
+    
+    .modal-content {
+        width: 95%;
+        padding: 15px;
+    }
+    
+    .chat-input-form input {
+        padding: 10px 12px;
+    }
+    
+    .chat-input-form button {
+        padding: 10px 15px;
+    }
+}

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MacAssistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>MacAssistant</h1>
+            <p class="app-description">Your intelligent macOS task assistant</p>
+        </header>
+        
+        <main class="app-main">
+            <div class="chat-container">
+                <div id="chat-messages" class="chat-messages"></div>
+                
+                <form id="chat-form" class="chat-input-form">
+                    <input type="text" id="chat-input" placeholder="Describe your task (e.g., 'Create a backup of my Documents folder')" autocomplete="off">
+                    <button type="submit">Send</button>
+                </form>
+            </div>
+        </main>
+        
+        <div id="plan-review-modal" class="modal">
+            <div class="modal-content">
+                <h2>Review Plan</h2>
+                <p>I'll complete your task with these steps:</p>
+                
+                <div id="plan-steps" class="plan-steps"></div>
+                
+                <div class="modal-actions">
+                    <button id="accept-plan" class="btn-primary">Accept Plan</button>
+                    <button id="reject-plan" class="btn-secondary">Reject Plan</button>
+                </div>
+                
+                <div id="plan-feedback" class="plan-feedback hidden">
+                    <h3>Why are you rejecting this plan?</h3>
+                    <textarea id="plan-feedback-input" placeholder="Please provide feedback on why this plan doesn't meet your needs..."></textarea>
+                    <div class="modal-actions">
+                        <button id="submit-feedback" class="btn-primary">Submit Feedback</button>
+                        <button id="cancel-feedback" class="btn-secondary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="risky-command-modal" class="modal">
+            <div class="modal-content">
+                <h2>Risky Command Confirmation</h2>
+                <div class="warning-icon">⚠️</div>
+                
+                <p class="warning-text">This command is potentially risky:</p>
+                <pre id="risky-command" class="code-block"></pre>
+                
+                <p id="risk-explanation" class="risk-explanation"></p>
+                
+                <p>To proceed, please type "YES" to confirm:</p>
+                <input type="text" id="confirmation-input" placeholder="Type YES to confirm">
+                
+                <div class="modal-actions">
+                    <button id="confirm-command" class="btn-danger">Confirm Execution</button>
+                    <button id="cancel-command" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

