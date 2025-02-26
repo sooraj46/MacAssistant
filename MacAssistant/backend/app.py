@@ -111,6 +111,16 @@ def confirm_risky_command():
         agent_orchestrator.skip_command(command_id)
         return jsonify({'status': 'command_skipped'})
 
+@app.route('/api/plan/<plan_id>', methods=['GET'])
+def get_plan(plan_id):
+    """Get a specific plan by ID."""
+    plan = llm_integration.plans.get(plan_id)
+    
+    if not plan:
+        return jsonify({'error': 'Plan not found'}), 404
+        
+    return jsonify({'plan': plan})
+
 @app.route('/api/logs', methods=['GET'])
 def get_logs():
     """Get system logs (for admin use)."""

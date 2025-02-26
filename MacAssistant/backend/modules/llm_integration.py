@@ -168,6 +168,7 @@ class LLMIntegration:
         
         # Send request to Gemini
         response = self._call_gemini_api(system_prompt, user_message)
+        logger.info(f"Revised plan response: {response}")
         
         # Parse the response to extract the revised plan
         revised_plan = self._parse_plan_with_commands(response)

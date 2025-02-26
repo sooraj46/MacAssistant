@@ -72,6 +72,30 @@ function App() {
         break;
       case 'plan_revised':
         addMessage('Plan has been revised based on execution results.', 'system');
+        
+        // Get the revised plan ID from the event data
+        const revisedPlanId = data.revised_plan_id;
+        
+        // If we have a revised plan ID, fetch the plan details
+        if (revisedPlanId) {
+          const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+          try {
+            // Fetch the revised plan details with the full URL
+            axios.get(`${apiUrl}/api/plan/${revisedPlanId}`).then(response => {
+              // Update the current plan with the revised one
+              setCurrentPlan(response.data.plan);
+              
+              // Show the plan review modal
+              setShowPlanReview(true);
+            }).catch(error => {
+              console.error('Error fetching revised plan:', error);
+              addMessage('Error fetching the revised plan details.', 'system');
+            });
+          } catch (error) {
+            console.error('Error fetching revised plan:', error);
+            addMessage('Error fetching the revised plan details.', 'system');
+          }
+        }
         break;
       default:
         // General status update
@@ -103,8 +127,9 @@ function App() {
     addMessage('Thinking...', 'system');
     
     try {
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
       // Send request to server
-      const response = await axios.post('/api/task', { request: text });
+      const response = await axios.post(`${apiUrl}/api/task`, { request: text });
       
       // Remove typing indicator
       setMessages(prev => prev.filter(message => message.content !== 'Thinking...'));
@@ -132,8 +157,9 @@ function App() {
     addMessage('Plan accepted. Beginning execution...', 'system');
     
     try {
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
       // Send acceptance to server
-      await axios.post('/api/plan/accept', { plan_id: currentPlan.id });
+      await axios.post(`${apiUrl}/api/plan/accept`, { plan_id: currentPlan.id });
     } catch (error) {
       console.error('Error accepting plan:', error);
       addMessage('Sorry, there was an error starting plan execution. Please try again.', 'system');
@@ -159,8 +185,9 @@ function App() {
     }
     
     try {
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
       // Send rejection to server
-      const response = await axios.post('/api/plan/reject', { 
+      const response = await axios.post(`${apiUrl}/api/plan/reject`, { 
         plan_id: currentPlan.id,
         feedback: feedbackText
       });
@@ -199,8 +226,9 @@ function App() {
     addMessage('Command confirmed. Executing...', 'system');
     
     try {
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
       // Send confirmation to server
-      await axios.post('/api/command/confirm', { 
+      await axios.post(`${apiUrl}/api/command/confirm`, { 
         command_id: currentCommand.command_id,
         confirmed: true
       });
@@ -219,8 +247,9 @@ function App() {
     addMessage('Command cancelled.', 'system');
     
     try {
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
       // Send cancellation to server
-      await axios.post('/api/command/confirm', { 
+      await axios.post(`${apiUrl}/api/command/confirm`, { 
         command_id: currentCommand.command_id,
         confirmed: false
       });
