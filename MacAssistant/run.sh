@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e  # Exit on error
+
 # Check Python installation
 if ! command -v python3 &> /dev/null; then
     echo "Python 3 is required but not found. Please install Python 3 and try again."
@@ -15,6 +17,10 @@ fi
 # Activate virtual environment
 echo "Activating virtual environment..."
 source venv/bin/activate
+
+# Upgrade pip
+echo "Upgrading pip..."
+pip install --upgrade pip
 
 # Install requirements
 echo "Installing dependencies..."

@@ -21,6 +21,10 @@ class Config:
     GEMINI_API_KEY = os.environ.get('GOOGLE_API_KEY')  # Using GOOGLE_API_KEY as in the example
     GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.0-flash-thinking-exp-01-21')  # Default from example
     
+    # LLM Command Generation configuration
+    USE_LLM_COMMAND_GENERATION = os.environ.get('USE_LLM_COMMAND_GENERATION', 'True').lower() == 'true'
+    COMMAND_TEMPERATURE = float(os.environ.get('COMMAND_TEMPERATURE', '0.2'))  # Lower for more deterministic commands
+    
     # Logging configuration
     LOG_DIR = os.environ.get('LOG_DIR', 'logs')
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')

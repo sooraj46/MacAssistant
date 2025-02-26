@@ -6,6 +6,7 @@ LLM communication, plan management, command execution, safety checks, and loggin
 
 import os
 import json
+import nest_asyncio
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from flask_socketio import SocketIO
@@ -15,6 +16,9 @@ from modules.command_generator import CommandGenerator
 from modules.safety_checker import SafetyChecker
 from modules.execution_engine import ExecutionEngine
 from modules.logger import Logger
+
+# Apply nest_asyncio to make asyncio play nice with Flask
+nest_asyncio.apply()
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -133,5 +137,8 @@ def handle_execution_status(data):
     """Send execution status updates to the client."""
     socketio.emit('execution_update', data)
 
+# This allows the application to be found when run with flask run command
+application = app
+
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

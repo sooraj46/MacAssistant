@@ -27,9 +27,37 @@
     {
       "pattern": "Show date and time",
       "command": "date"
+    },
+    {
+      "pattern": "Check Python version",
+      "command": "python --version && python3 --version"
+    },
+    {
+      "pattern": "Check the version of Python",
+      "command": "python --version && python3 --version"
+    },
+    {
+      "pattern": "Type python --version",
+      "command": "python --version"
+    },
+    {
+      "pattern": "Type python3 --version",
+      "command": "python3 --version"
     }
   ],
   "keywords": [
+    {
+      "keywords": ["version", "python"],
+      "command": "python --version && python3 --version",
+      "extractors": {}
+    },
+    {
+      "keywords": ["version", "--version"],
+      "command": "{command} --version",
+      "extractors": {
+        "command": "(?:check|get|display) (?:the )?version (?:of|for) ([a-zA-Z0-9_\\-]+)"
+      }
+    },
     {
       "keywords": ["create", "file"],
       "command": "echo '{content}' > {filename}",
@@ -62,10 +90,13 @@
     },
     {
       "keywords": ["open", "application"],
-      "command": "open -a '{app}'",
-      "extractors": {
-        "app": "(?:open|launch|start) (?:the )?application (?:named |called )?['\"]?([\\w\\.-]+)['\"]?"
-      }
+      "command": "open -a Terminal",
+      "extractors": {}
+    },
+    {
+      "keywords": ["open", "terminal"],
+      "command": "open -a Terminal",
+      "extractors": {}
     },
     {
       "keywords": ["ping", "host"],
