@@ -1,9 +1,3 @@
-FROM node:16 as frontend-builder
-WORKDIR /app
-COPY frontend /app
-RUN npm install
-RUN npm run build
-
 FROM python:3.9-slim
 WORKDIR /app
 
@@ -13,8 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY backend /app/
-# Copy frontend build from the frontend-builder stage
-COPY --from=frontend-builder /app/build /app/static/build
 
 # Create logs directory
 RUN mkdir -p logs

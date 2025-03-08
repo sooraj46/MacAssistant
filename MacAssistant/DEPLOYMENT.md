@@ -39,12 +39,6 @@ Using Docker provides better isolation and makes it easier to deploy on differen
 1. Create a Dockerfile in the project root:
 
 ```dockerfile
-FROM node:16 as frontend-builder
-WORKDIR /app
-COPY MacAssistant/frontend /app
-RUN npm install
-RUN npm run build
-
 FROM python:3.9-slim
 WORKDIR /app
 
@@ -54,8 +48,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY MacAssistant/backend /app/
-# Copy frontend build from the frontend-builder stage
-COPY --from=frontend-builder /app/build /app/static/build
 
 # Create logs directory
 RUN mkdir -p logs
@@ -163,7 +155,7 @@ AWS Elastic Beanstalk provides a managed platform for running web applications.
        application.run()
    ```
 
-5. Create a requirements.txt file in the project root that includes all dependencies.
+5. Make sure the backend/requirements.txt file includes all dependencies.
 
 6. Create a .ebextensions/01_flask.config file:
    ```yaml
@@ -190,6 +182,29 @@ AWS Elastic Beanstalk provides a managed platform for running web applications.
    eb open
    ```
 
+## Project Structure
+
+```
+MacAssistant/
+├── backend/                  # Flask backend server
+│   ├── app.py                # Main application entry point
+│   ├── config.py             # Configuration handling
+│   ├── modules/              # Backend modules
+│   │   ├── agent_orchestrator.py
+│   │   ├── command_generator.py
+│   │   ├── execution_engine.py
+│   │   ├── llm_integration.py
+│   │   ├── logger.py
+│   │   └── safety_checker.py
+│   ├── static/               # Static files (CSS, JavaScript)
+│   ├── templates/            # HTML templates
+│   └── requirements.txt      # Python dependencies
+├── build.sh                  # Production build script
+├── run.sh                    # Production run script
+├── start-dev.sh              # Development mode script
+└── .env.example              # Example environment variables
+```
+
 ## Important Security Considerations
 
 For any deployment option:
@@ -207,5 +222,4 @@ For any deployment option:
 2. Set up proper logging and monitoring
 3. Implement error tracking
 4. Configure proper SSL/TLS certificates
-5. Consider adding a CDN for static assets
-6. Implement rate limiting to protect against abuse
+5. Implement rate limiting to protect against abuse

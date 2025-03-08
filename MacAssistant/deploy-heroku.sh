@@ -22,7 +22,6 @@ heroku create $APP_NAME
 
 # Add buildpacks
 echo "Adding buildpacks..."
-heroku buildpacks:add heroku/nodejs --app $APP_NAME
 heroku buildpacks:add heroku/python --app $APP_NAME
 
 # Set environment variables
