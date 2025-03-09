@@ -57,6 +57,19 @@ class SafetyChecker:
         
         # Check for specific dangerous operations
         return self._check_dangerous_operations(command)
+        
+    def is_safe(self, command):
+        """
+        Check if a command is safe to execute.
+        
+        Args:
+            command (str): The command to check
+            
+        Returns:
+            bool: True if the command is safe, False otherwise
+        """
+        # A command is safe if it's not risky
+        return not self.is_risky(command)
     
     def _load_additional_patterns(self):
         """Load additional risky patterns from a JSON file."""

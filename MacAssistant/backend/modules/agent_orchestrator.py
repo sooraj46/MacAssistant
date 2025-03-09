@@ -43,7 +43,7 @@ class AgentOrchestrator:
         print(f"DEBUG: Beginning execution of plan {plan_id}")
         
         # Get the plan
-        plan = self.llm_integration.plans.get(plan_id)
+        plan = self.llm_integration.get_plan(plan_id)
         if not plan:
             self.logger.log_error(f"Plan with ID {plan_id} not found")
             print(f"DEBUG: Plan with ID {plan_id} not found")
@@ -208,6 +208,29 @@ class AgentOrchestrator:
         # Log the command execution
         self.logger.log_command_execution(plan_id, step_index, command)
         
+        # Before executing, check if this needs human validation first
+        if step.get('needs_user_confirmation', False) or plan.get('human_confirmation_required', False):
+            # Store command information for later execution
+            command_id = f"{plan_id}_{step_index}"
+            self.pending_commands[command_id] = {
+                'plan_id': plan_id,
+                'step_index': step_index,
+                'command': command
+            }
+            
+            # Update step status
+            step['status'] = 'awaiting_confirmation'
+            
+            # Emit status update to prompt for confirmation
+            self._emit_status_update(plan_id, {
+                'event': 'user_confirmation_required',
+                'command_id': command_id,
+                'step_index': step_index,
+                'command': command,
+                'description': step['description']
+            })
+            return
+        
         # Execute the command
         success, stdout, stderr = self.execution_engine.execute(command)
         
@@ -216,8 +239,22 @@ class AgentOrchestrator:
         print(f"DEBUG: stdout: {stdout}")
         print(f"DEBUG: stderr: {stderr}")
         
-        # Update step status based on execution result
-        if success:
+        # Use LLM to verify the result
+        verification = self.llm_integration.verify_execution_result(
+            step['description'],
+            command,
+            stdout,
+            stderr,
+            success
+        )
+        
+        # Store verification result with step
+        step['verification'] = verification
+        
+        # Update step status based on LLM verification (not just return code)
+        llm_success = verification.get('success', success)
+        
+        if llm_success:
             step['status'] = 'completed'
             step['stdout'] = stdout
             step['stderr'] = stderr
@@ -232,17 +269,34 @@ class AgentOrchestrator:
             plan['step_results'][str(step['number'])] = {
                 'status': 'completed',
                 'stdout': stdout,
-                'stderr': stderr
+                'stderr': stderr,
+                'verification': verification
             }
             
-            # Emit status update
+            # Emit status update with verification
             self._emit_status_update(plan_id, {
                 'event': 'step_completed',
                 'step_index': step_index,
                 'stdout': stdout,
-                'stderr': stderr
+                'stderr': stderr,
+                'verification': verification
             })
             
+            # Always show the result to the user and ask to continue
+            # This makes the system more conversational and human-in-loop
+            self._emit_status_update(plan_id, {
+                'event': 'step_completed_feedback',
+                'step_index': step_index,
+                'description': step['description'],
+                'stdout': stdout,
+                'explanation': verification.get('explanation', ''),
+                'continue_automatically': not active_config.HUMAN_VALIDATION_REQUIRED
+            })
+            
+            # If human validation is required globally, don't auto-continue
+            if active_config.HUMAN_VALIDATION_REQUIRED:
+                return
+                
             # Check if we need to pause for user observation
             if step.get('is_observe', False):
                 # Emit an event for the UI to display observation prompt
@@ -272,19 +326,26 @@ class AgentOrchestrator:
             plan['step_results'][str(step['number'])] = {
                 'status': 'failed',
                 'stdout': stdout,
-                'stderr': stderr
+                'stderr': stderr,
+                'verification': verification
             }
             
-            # Emit status update
+            # Emit status update with verification and suggestion
             self._emit_status_update(plan_id, {
                 'event': 'step_failed',
                 'step_index': step_index,
                 'stdout': stdout,
-                'stderr': stderr
+                'stderr': stderr,
+                'verification': verification
             })
             
-            # Try to auto-repair the plan
-            self._attempt_plan_revision(plan_id, step_index, stderr)
+            # Don't auto-repair, ask the user first
+            self._emit_status_update(plan_id, {
+                'event': 'step_failure_options',
+                'step_index': step_index,
+                'verification': verification,
+                'suggestion': verification.get('suggestion', '')
+            })
     
     def _attempt_plan_revision(self, plan_id, step_index, error_message):
         """
@@ -509,6 +570,116 @@ class AgentOrchestrator:
         
         # Continue to the next step
         self._execute_step(plan_id, step_index + 1)
+        
+    def step_feedback_completed(self, plan_id, step_index, feedback=None, continue_execution=True):
+        """
+        Handle user feedback on a completed step and determine whether to continue execution.
+        
+        Args:
+            plan_id (str): The ID of the plan
+            step_index (int): The index of the step
+            feedback (str, optional): Any user feedback on the step execution
+            continue_execution (bool): Whether to continue with the next step
+        """
+        plan = self.active_plans.get(plan_id)
+        if not plan:
+            self.logger.log_error(f"Plan with ID {plan_id} not found")
+            return
+            
+        # Get the step
+        step = plan['steps'][step_index]
+            
+        # If feedback was provided, store it
+        if feedback:
+            step['user_feedback'] = feedback
+            
+            # Store in step results for later revisions if needed
+            if 'step_results' in plan:
+                if str(step['number']) in plan['step_results']:
+                    plan['step_results'][str(step['number'])]['user_feedback'] = feedback
+        
+        # Log the feedback
+        self.logger.log_info(f"step_feedback: {{'plan_id': '{plan_id}', 'step_index': {step_index}, 'feedback': '{feedback}'}}")
+                    
+        # Emit status update
+        self._emit_status_update(plan_id, {
+            'event': 'step_feedback_received',
+            'step_index': step_index,
+            'feedback': feedback,
+            'continue_execution': continue_execution
+        })
+        
+        # Continue to the next step if requested
+        if continue_execution:
+            self._execute_step(plan_id, step_index + 1)
+        else:
+            # Pause execution until user decides to continue or revise
+            plan['status'] = 'paused'
+            self._emit_status_update(plan_id, {
+                'event': 'plan_paused',
+                'step_index': step_index,
+                'reason': 'User requested pause after step feedback'
+            })
+    
+    def user_confirmation_response(self, command_id, approved, feedback=None):
+        """
+        Handle user response to a command that required confirmation.
+        
+        Args:
+            command_id (str): The ID of the command
+            approved (bool): Whether the user approved the command
+            feedback (str, optional): Any user feedback
+        """
+        # Get the pending command
+        command_info = self.pending_commands.get(command_id)
+        if not command_info:
+            self.logger.log_error(f"Command with ID {command_id} not found")
+            return
+            
+        # Get plan and step
+        plan_id = command_info['plan_id']
+        step_index = command_info['step_index']
+        command = command_info['command']
+        
+        # Get the plan
+        plan = self.active_plans.get(plan_id)
+        if not plan:
+            self.logger.log_error(f"Plan with ID {plan_id} not found")
+            del self.pending_commands[command_id]
+            return
+            
+        # Get the step
+        step = plan['steps'][step_index]
+        
+        if approved:
+            # Execute the command now that it's approved
+            del self.pending_commands[command_id]
+            self._execute_command_internal(plan_id, step_index, command)
+        else:
+            # Command was rejected
+            step['status'] = 'skipped'
+            step['user_feedback'] = feedback if feedback else "Command rejected by user"
+            
+            # Log the rejection
+            self.logger.log_info(f"command_rejected: {{'plan_id': '{plan_id}', 'step_index': {step_index}, 'command': '{command}', 'feedback': '{feedback}'}}")
+            
+            # Emit status update
+            self._emit_status_update(plan_id, {
+                'event': 'command_rejected',
+                'step_index': step_index,
+                'command': command,
+                'feedback': feedback
+            })
+            
+            # Remove from pending commands
+            del self.pending_commands[command_id]
+            
+            # Ask for next step - either revise plan or continue
+            self._emit_status_update(plan_id, {
+                'event': 'command_rejection_options',
+                'step_index': step_index,
+                'feedback': feedback
+            })
     
     def _emit_status_update(self, plan_id, additional_data=None):
         """

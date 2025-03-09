@@ -412,8 +412,14 @@ body {
     100% { opacity: 1; }
 }
 
-/* Revision Option Styles */
-.revision-option {
+/* Interactive Message Styles */
+.revision-option,
+.failure-options,
+.confirmation-required,
+.rejection-options,
+.pause-options,
+.observation-required,
+.step-feedback {
     max-width: 100%;
     width: 90%;
     padding: 15px;
@@ -421,10 +427,95 @@ body {
     border: 1px solid var(--border-color);
 }
 
-.revision-option p {
+.revision-option p,
+.failure-options p,
+.confirmation-required p,
+.rejection-options p,
+.pause-options p,
+.observation-required p,
+.step-feedback p {
     margin-bottom: 15px;
     font-weight: bold;
     text-align: center;
+}
+
+.step-description {
+    font-weight: normal;
+    font-style: italic;
+    margin-bottom: 10px;
+    text-align: left;
+}
+
+.command-code {
+    background-color: var(--dark-color);
+    color: var(--light-color);
+    padding: 10px;
+    border-radius: 6px;
+    font-family: monospace;
+    overflow-x: auto;
+    margin-bottom: 15px;
+}
+
+.suggestion {
+    background-color: var(--warning-color);
+    color: white;
+    padding: 8px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    font-style: italic;
+    font-weight: normal;
+}
+
+.feedback-container {
+    margin-bottom: 15px;
+}
+
+.feedback-container label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+
+.feedback-container input,
+.step-feedback input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: var(--font-family);
+    background-color: var(--light-color);
+    color: var(--text-color);
+}
+
+.feedback-prompt {
+    max-width: 100%;
+    width: 90%;
+    padding: 15px;
+    background-color: var(--light-color);
+    border: 1px solid var(--border-color);
+}
+
+.feedback-prompt textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    margin-bottom: 15px;
+}
+
+.observation-required textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    margin-bottom: 15px;
+    min-height: 80px;
 }
 
 .button-container {

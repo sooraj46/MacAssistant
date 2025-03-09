@@ -10,6 +10,8 @@ import logging
 import google.genai as genai
 import google.genai.types as types # Fixed import
 from config import active_config
+import tempfile
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,7 +32,12 @@ class LLMIntegration:
         if not self.api_key:
             raise ValueError("Missing GEMINI_API_KEY in configuration.")
         
-        self.plans = {}  # Store generated plans
+        self.plans = {}  # In-memory cache of plans
+        
+        # Create or use plans directory for persistent storage
+        self.plans_dir = os.path.join(active_config.LOG_DIR, 'plans')
+        os.makedirs(self.plans_dir, exist_ok=True)
+        logger.info(f"Using plans directory: {self.plans_dir}")
         
     def generate_plan(self, user_request):
         """
@@ -87,9 +94,7 @@ class LLMIntegration:
         plan = self._parse_plan_with_commands(response)
         
         # Store the plan
-        plan_id = str(hash(json.dumps(plan)))
-        self.plans[plan_id] = plan
-        plan['id'] = plan_id
+        self._store_plan(plan)
         
         return plan
     
@@ -106,9 +111,11 @@ class LLMIntegration:
             dict: A revised plan
         """
         # Get the original plan
-        original_plan = self.plans.get(plan_id)
+        original_plan = self.get_plan(plan_id)
         if not original_plan:
             raise ValueError(f"Plan with ID {plan_id} not found")
+            
+        logger.info(f"Revising plan {plan_id} based on feedback")
         
         # System prompt for plan revision
         system_prompt = """
@@ -190,10 +197,7 @@ class LLMIntegration:
         revised_plan['revision_summary'] = summary
                 
         # Store the revised plan
-        revised_plan_id = str(hash(json.dumps(revised_plan)))
-        self.plans[revised_plan_id] = revised_plan
-        revised_plan['id'] = revised_plan_id
-        revised_plan['original_plan_id'] = plan_id
+        self._store_plan(revised_plan, is_revision=True, original_plan_id=plan_id)
         
         return revised_plan
     
@@ -243,6 +247,82 @@ class LLMIntegration:
         # Use the global event loop defined at module level
         # This prevents Kqueue conflicts on macOS by reusing the same loop
         return global_loop.run_until_complete(self.async_call_gemini(system_prompt, user_message))
+        
+    def verify_execution_result(self, step_description, command, stdout, stderr, success):
+        """
+        Verify the execution result of a command using the LLM.
+        
+        Args:
+            step_description (str): The description of the step
+            command (str): The executed command
+            stdout (str): The standard output from the command
+            stderr (str): The standard error from the command
+            success (bool): Whether the command execution was successful
+            
+        Returns:
+            dict: Analysis result containing success evaluation and explanation
+        """
+        # System prompt for verification
+        system_prompt = """
+        You are MacAssistant's verification system. Your job is to analyze command execution results
+        and determine if the command achieved its intended purpose.
+        
+        INSTRUCTIONS:
+        1. Analyze the step description, command, stdout, stderr, and return code
+        2. Determine if the command succeeded in achieving its purpose
+        3. Provide a brief explanation of your reasoning
+        4. If the command failed or produced unexpected results, suggest a potential fix
+        
+        FORMAT YOUR RESPONSE AS JSON:
+        {
+            "success": true/false,
+            "explanation": "Brief explanation of result analysis",
+            "suggestion": "Suggested fix or next steps if needed, otherwise empty"
+        }
+        """
+        
+        # Build the user message with execution details
+        user_message = f"""
+        STEP DESCRIPTION: {step_description}
+        EXECUTED COMMAND: {command}
+        RETURN CODE: {'0 (Success)' if success else 'Non-zero (Failure)'}
+        STDOUT: {stdout if stdout else '(No output)'}
+        STDERR: {stderr if stderr else '(No error output)'}
+        
+        Please analyze these results and determine if the command successfully achieved its purpose.
+        Return your analysis in the required JSON format.
+        """
+        
+        # Call the LLM for verification
+        response = self._call_gemini_api(system_prompt, user_message)
+        
+        # Parse the JSON response
+        try:
+            # Find JSON in the response (in case LLM adds explanatory text)
+            import re
+            import json
+            
+            json_match = re.search(r'({[\s\S]*})', response)
+            if json_match:
+                json_str = json_match.group(1)
+                result = json.loads(json_str)
+                return result
+            else:
+                # If no JSON found, create a fallback result
+                return {
+                    "success": success,  # Fall back to the return code
+                    "explanation": "Unable to parse LLM verification response.",
+                    "suggestion": "Please check the command output manually."
+                }
+                
+        except Exception as e:
+            logger.exception(f"Error parsing verification response: {e}")
+            # Return a fallback result based on the command's return code
+            return {
+                "success": success,
+                "explanation": f"Error analyzing results: {str(e)}",
+                "suggestion": "Please check the command output manually."
+            }
     
     def _parse_plan_with_commands(self, response):
         """
@@ -329,7 +409,7 @@ class LLMIntegration:
             dict: A revised plan
         """
         # Get the original plan
-        original_plan = self.plans.get(plan_id)
+        original_plan = self.get_plan(plan_id)
         if not original_plan:
             raise ValueError(f"Plan with ID {plan_id} not found")
             
@@ -418,13 +498,95 @@ class LLMIntegration:
         revised_plan['revision_summary'] = summary
                 
         # Store the revised plan
-        revised_plan_id = str(hash(json.dumps(revised_plan)))
-        self.plans[revised_plan_id] = revised_plan
-        revised_plan['id'] = revised_plan_id
-        revised_plan['original_plan_id'] = plan_id
+        self._store_plan(revised_plan, is_revision=True, original_plan_id=plan_id)
         
         return revised_plan
         
+    def _store_plan(self, plan, is_revision=False, original_plan_id=None):
+        """
+        Store a plan both in memory and on disk.
+        
+        Args:
+            plan (dict): The plan to store
+            is_revision (bool): Whether this is a revised plan
+            original_plan_id (str): The ID of the original plan if this is a revision
+            
+        Returns:
+            str: The plan ID
+        """
+        # Create a unique ID for the plan
+        plan_id = str(hash(json.dumps(plan)))
+        plan['id'] = plan_id
+        
+        # If this is a revision, store the original plan ID
+        if is_revision and original_plan_id:
+            plan['original_plan_id'] = original_plan_id
+        
+        # Store in memory cache
+        self.plans[plan_id] = plan
+        
+        # Store to disk
+        self._save_plan_to_disk(plan_id, plan)
+        
+        logger.info(f"{'Revised p' if is_revision else 'P'}lan stored with ID: {plan_id}")
+        return plan_id
+    
+    def _save_plan_to_disk(self, plan_id, plan):
+        """
+        Save a plan to disk for persistence.
+        
+        Args:
+            plan_id (str): The ID of the plan
+            plan (dict): The plan to save
+        """
+        try:
+            plan_path = os.path.join(self.plans_dir, f"{plan_id}.json")
+            
+            # Write to a temporary file first, then rename for atomicity
+            with tempfile.NamedTemporaryFile('w', delete=False) as temp_file:
+                json.dump(plan, temp_file, indent=2)
+                
+            # Move temporary file to final location
+            shutil.move(temp_file.name, plan_path)
+            logger.debug(f"Plan saved to {plan_path}")
+            
+        except Exception as e:
+            logger.error(f"Error saving plan to disk: {e}")
+            # Continue execution even if saving fails
+    
+    def get_plan(self, plan_id):
+        """
+        Get a plan by ID, checking both memory cache and disk storage.
+        
+        Args:
+            plan_id (str): The ID of the plan to get
+            
+        Returns:
+            dict: The plan, or None if not found
+        """
+        # Check memory cache first
+        plan = self.plans.get(plan_id)
+        if plan:
+            logger.debug(f"Plan {plan_id} found in memory cache")
+            return plan
+            
+        # If not in memory, try to load from disk
+        try:
+            plan_path = os.path.join(self.plans_dir, f"{plan_id}.json")
+            if os.path.exists(plan_path):
+                with open(plan_path, 'r') as f:
+                    plan = json.load(f)
+                # Update memory cache
+                self.plans[plan_id] = plan
+                logger.debug(f"Plan {plan_id} loaded from disk")
+                return plan
+        except Exception as e:
+            logger.error(f"Error loading plan from disk: {e}")
+            
+        # Not found
+        logger.warning(f"Plan {plan_id} not found in memory or on disk")
+        return None
+    
     def _parse_plan(self, response):
         """
         Legacy method to parse plans without commands.

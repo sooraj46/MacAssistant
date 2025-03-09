@@ -31,6 +31,8 @@ heroku config:set SECRET_KEY=$(openssl rand -hex 32) --app $APP_NAME
 heroku config:set LOG_DIR=logs --app $APP_NAME
 heroku config:set LOG_LEVEL=INFO --app $APP_NAME
 heroku config:set MAX_EXECUTION_TIME=300 --app $APP_NAME
+heroku config:set HUMAN_VALIDATION_REQUIRED=True --app $APP_NAME
+heroku config:set LLM_VERIFY_RESULTS=True --app $APP_NAME
 
 # Prompt for Google API key
 read -p "Enter your Google API key: " GOOGLE_API_KEY

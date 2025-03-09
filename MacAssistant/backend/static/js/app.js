@@ -26,8 +26,14 @@ const cancelCommandBtn = document.getElementById('cancel-command');
 let currentPlan = null;
 let currentCommand = null;
 
-// Initialize Socket.IO
-const socket = io();
+// Initialize Socket.IO with reconnection options
+const socket = io({
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000
+});
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
@@ -56,44 +62,114 @@ document.addEventListener('DOMContentLoaded', () => {
  * Set up Socket.IO event listeners
  */
 function setupSocketEvents() {
-    // Connection and disconnection events
+    // Connection events
     socket.on('connect', () => {
         console.log('Connected to server');
+        addMessage('Connected to server', 'system');
     });
     
-    socket.on('disconnect', () => {
-        console.log('Disconnected from server');
-        addMessage('Connection lost. Trying to reconnect...', 'system');
+    socket.on('connect_error', (error) => {
+        console.error('Connection error:', error);
+        addMessage('Error connecting to server. Please check your connection.', 'system');
+    });
+    
+    socket.on('connect_timeout', () => {
+        console.error('Connection timeout');
+        addMessage('Connection timeout. Please check your connection.', 'system');
+    });
+    
+    socket.on('reconnect', (attemptNumber) => {
+        console.log('Reconnected to server after', attemptNumber, 'attempts');
+        addMessage('Reconnected to server', 'system');
+    });
+    
+    socket.on('reconnect_attempt', (attemptNumber) => {
+        console.log('Trying to reconnect:', attemptNumber);
+    });
+    
+    socket.on('reconnect_error', (error) => {
+        console.error('Reconnection error:', error);
+    });
+    
+    socket.on('reconnect_failed', () => {
+        console.error('Failed to reconnect');
+        addMessage('Failed to reconnect to server. Please refresh the page.', 'system');
+    });
+    
+    socket.on('disconnect', (reason) => {
+        console.log('Disconnected from server:', reason);
+        if (reason === 'io server disconnect') {
+            // Server disconnected us, need to reconnect manually
+            socket.connect();
+            addMessage('Disconnected from server. Trying to reconnect...', 'system');
+        } else {
+            // Socket automatically tries to reconnect
+            addMessage('Connection lost. Trying to reconnect...', 'system');
+        }
+    });
+    
+    // Connection status confirmation from server
+    socket.on('connection_status', (data) => {
+        console.log('Connection status:', data);
     });
     
     // Execution updates
     socket.on('execution_update', (data) => {
         console.log('Execution update:', data);
         
-        // Handle different event types
-        switch (data.event) {
-            case 'step_completed':
-                handleStepCompleted(data);
-                break;
-            case 'step_failed':
-                handleStepFailed(data);
-                break;
-            case 'risky_command':
-                handleRiskyCommand(data);
-                break;
-            case 'plan_completed':
-                handlePlanCompleted(data);
-                break;
-            case 'plan_aborted':
-                handlePlanAborted(data);
-                break;
-            case 'plan_revised':
-                handlePlanRevised(data);
-                break;
-            default:
-                // General status update
-                updateExecutionStatus(data);
-                break;
+        try {
+            // Make sure we have valid data
+            if (!data || !data.event) {
+                console.error('Invalid execution update data:', data);
+                return;
+            }
+            
+            // Handle different event types
+            switch (data.event) {
+                case 'step_completed':
+                    handleStepCompleted(data);
+                    break;
+                case 'step_completed_feedback':
+                    handleStepCompletedFeedback(data);
+                    break;
+                case 'step_failed':
+                    handleStepFailed(data);
+                    break;
+                case 'step_failure_options':
+                    handleStepFailureOptions(data);
+                    break;
+                case 'user_confirmation_required':
+                    handleUserConfirmationRequired(data);
+                    break;
+                case 'command_rejected':
+                    handleCommandRejected(data);
+                    break;
+                case 'command_rejection_options':
+                    handleCommandRejectionOptions(data);
+                    break;
+                case 'plan_completed':
+                    handlePlanCompleted(data);
+                    break;
+                case 'plan_aborted':
+                    handlePlanAborted(data);
+                    break;
+                case 'plan_paused':
+                    handlePlanPaused(data);
+                    break;
+                case 'observation_required':
+                    handleObservationRequired(data);
+                    break;
+                case 'plan_revised':
+                    handlePlanRevised(data);
+                    break;
+                default:
+                    // General status update
+                    updateExecutionStatus(data);
+                    break;
+            }
+        } catch (error) {
+            console.error('Error handling execution update:', error);
+            addMessage('Error processing server update. Please try again.', 'system');
         }
     });
 }
@@ -125,10 +201,22 @@ function handleChatSubmit(e) {
         },
         body: JSON.stringify({ request: message })
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            // Handle HTTP errors
+            return response.json().then(errorData => {
+                throw new Error(errorData.error || `HTTP error ${response.status}`);
+            });
+        }
+        return response.json();
+    })
     .then(data => {
         // Remove typing indicator
         typingIndicator.remove();
+        
+        if (!data.plan) {
+            throw new Error('No plan received from server');
+        }
         
         // Store the plan
         currentPlan = data.plan;
@@ -141,7 +229,7 @@ function handleChatSubmit(e) {
         typingIndicator.remove();
         
         console.error('Error:', error);
-        addMessage('Sorry, there was an error processing your request. Please try again.', 'system');
+        addMessage(`Sorry, there was an error processing your request: ${error.message}. Please try again.`, 'system');
     });
 }
 
@@ -274,7 +362,12 @@ function handlePlanAccept() {
         },
         body: JSON.stringify({ plan_id: currentPlan.id })
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
         console.log('Plan accepted:', data);
     })
@@ -539,6 +632,658 @@ function handlePlanRevised(data) {
             addMessage('Continuing execution with the revised plan...', 'system');
         }
     }
+}
+
+/**
+ * Handle step completion with feedback request
+ * @param {Object} data - Step data with verification
+ */
+function handleStepCompletedFeedback(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    const description = data.description;
+    const stdout = data.stdout?.trim() || '';
+    const explanation = data.explanation || 'Step completed successfully.';
+    
+    // Add message with verification result from LLM
+    addMessage(`Step ${stepNumber} completed: ${explanation}`, 'assistant');
+    
+    // Show output if any
+    if (stdout) {
+        addMessageWithOutput('Output:', stdout);
+    }
+    
+    // If we should not continue automatically, add feedback options
+    if (!data.continue_automatically) {
+        addStepFeedbackOption(data);
+    }
+}
+
+/**
+ * Handle step failure options
+ * @param {Object} data - Step data with verification
+ */
+function handleStepFailureOptions(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    const verification = data.verification || {};
+    const suggestion = data.suggestion || '';
+    
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'message-system', 'failure-options');
+    
+    const messageText = document.createElement('p');
+    messageText.textContent = 'How would you like to proceed with this failed step?';
+    messageElement.appendChild(messageText);
+    
+    if (suggestion) {
+        const suggestionText = document.createElement('p');
+        suggestionText.classList.add('suggestion');
+        suggestionText.textContent = `Suggestion: ${suggestion}`;
+        messageElement.appendChild(suggestionText);
+    }
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-container');
+    
+    const reviseButton = document.createElement('button');
+    reviseButton.classList.add('btn', 'btn-primary');
+    reviseButton.textContent = 'Revise Plan';
+    reviseButton.addEventListener('click', () => {
+        messageElement.remove();
+        requestPlanRevision({
+            step_index: stepIndex,
+            stdout: data.stdout || '',
+            stderr: data.stderr || ''
+        });
+    });
+    
+    const skipButton = document.createElement('button');
+    skipButton.classList.add('btn', 'btn-secondary');
+    skipButton.textContent = 'Skip & Continue';
+    skipButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Request to continue execution, skipping this step
+        fetch('/api/plan/continue', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id,
+                skip_failed_step: true
+            })
+        })
+        .then(() => {
+            addMessage(`Skipping step ${stepNumber} and continuing...`, 'system');
+        })
+        .catch(error => {
+            console.error('Error continuing plan:', error);
+        });
+    });
+    
+    const abortButton = document.createElement('button');
+    abortButton.classList.add('btn', 'btn-danger');
+    abortButton.textContent = 'Abort Plan';
+    abortButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Request to abort the plan
+        fetch('/api/plan/abort', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id
+            })
+        })
+        .then(() => {
+            addMessage('Plan execution aborted.', 'system');
+        })
+        .catch(error => {
+            console.error('Error aborting plan:', error);
+        });
+    });
+    
+    buttonContainer.appendChild(reviseButton);
+    buttonContainer.appendChild(skipButton);
+    buttonContainer.appendChild(abortButton);
+    messageElement.appendChild(buttonContainer);
+    
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Handle user confirmation requirement
+ * @param {Object} data - Command and step data
+ */
+function handleUserConfirmationRequired(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    const command = data.command;
+    const description = data.description;
+    const commandId = data.command_id;
+    
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'message-system', 'confirmation-required');
+    
+    const messageText = document.createElement('p');
+    messageText.textContent = `Step ${stepNumber} requires your confirmation before execution:`;
+    messageElement.appendChild(messageText);
+    
+    const descriptionText = document.createElement('p');
+    descriptionText.classList.add('step-description');
+    descriptionText.textContent = description;
+    messageElement.appendChild(descriptionText);
+    
+    const commandCode = document.createElement('pre');
+    commandCode.classList.add('command-code');
+    commandCode.textContent = command;
+    messageElement.appendChild(commandCode);
+    
+    const feedbackContainer = document.createElement('div');
+    feedbackContainer.classList.add('feedback-container');
+    
+    const feedbackLabel = document.createElement('label');
+    feedbackLabel.textContent = 'Optional feedback:';
+    feedbackContainer.appendChild(feedbackLabel);
+    
+    const feedbackInput = document.createElement('input');
+    feedbackInput.type = 'text';
+    feedbackInput.placeholder = 'Enter feedback or suggestions...';
+    feedbackContainer.appendChild(feedbackInput);
+    
+    messageElement.appendChild(feedbackContainer);
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-container');
+    
+    const confirmButton = document.createElement('button');
+    confirmButton.classList.add('btn', 'btn-primary');
+    confirmButton.textContent = 'Approve & Execute';
+    confirmButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Send confirmation to server
+        fetch('/api/command/confirm', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                command_id: commandId,
+                confirmed: true,
+                feedback: feedbackInput.value.trim()
+            })
+        })
+        .then(() => {
+            addMessage(`Executing command: ${command}`, 'system');
+        })
+        .catch(error => {
+            console.error('Error confirming command:', error);
+        });
+    });
+    
+    const rejectButton = document.createElement('button');
+    rejectButton.classList.add('btn', 'btn-danger');
+    rejectButton.textContent = 'Reject Command';
+    rejectButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Send rejection to server
+        fetch('/api/command/confirm', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                command_id: commandId,
+                confirmed: false,
+                feedback: feedbackInput.value.trim()
+            })
+        })
+        .then(() => {
+            addMessage(`Command rejected: ${command}`, 'system');
+        })
+        .catch(error => {
+            console.error('Error rejecting command:', error);
+        });
+    });
+    
+    buttonContainer.appendChild(confirmButton);
+    buttonContainer.appendChild(rejectButton);
+    messageElement.appendChild(buttonContainer);
+    
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Handle command rejection
+ * @param {Object} data - Rejection data
+ */
+function handleCommandRejected(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    const feedback = data.feedback;
+    
+    addMessage(`Step ${stepNumber} command was rejected.${feedback ? ` Feedback: ${feedback}` : ''}`, 'system');
+}
+
+/**
+ * Handle command rejection options
+ * @param {Object} data - Rejection data
+ */
+function handleCommandRejectionOptions(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'message-system', 'rejection-options');
+    
+    const messageText = document.createElement('p');
+    messageText.textContent = 'How would you like to proceed after rejecting this command?';
+    messageElement.appendChild(messageText);
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-container');
+    
+    const reviseButton = document.createElement('button');
+    reviseButton.classList.add('btn', 'btn-primary');
+    reviseButton.textContent = 'Revise Plan';
+    reviseButton.addEventListener('click', () => {
+        messageElement.remove();
+        requestPlanRevision({
+            step_index: stepIndex,
+            stderr: `Command was rejected by user${data.feedback ? `: ${data.feedback}` : ''}`
+        });
+    });
+    
+    const continueButton = document.createElement('button');
+    continueButton.classList.add('btn', 'btn-secondary');
+    continueButton.textContent = 'Skip & Continue';
+    continueButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Request to continue execution, skipping this step
+        fetch('/api/plan/continue', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id,
+                skip_failed_step: true
+            })
+        })
+        .then(() => {
+            addMessage(`Skipping step ${stepNumber} and continuing with the plan...`, 'system');
+        })
+        .catch(error => {
+            console.error('Error continuing plan:', error);
+        });
+    });
+    
+    const abortButton = document.createElement('button');
+    abortButton.classList.add('btn', 'btn-danger');
+    abortButton.textContent = 'Abort Plan';
+    abortButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Request to abort the plan
+        fetch('/api/plan/abort', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id
+            })
+        })
+        .then(() => {
+            addMessage('Plan execution aborted.', 'system');
+        })
+        .catch(error => {
+            console.error('Error aborting plan:', error);
+        });
+    });
+    
+    buttonContainer.appendChild(reviseButton);
+    buttonContainer.appendChild(continueButton);
+    buttonContainer.appendChild(abortButton);
+    messageElement.appendChild(buttonContainer);
+    
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Handle plan paused state
+ * @param {Object} data - Pause data
+ */
+function handlePlanPaused(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    const reason = data.reason || 'User requested pause';
+    
+    addMessage(`Plan execution paused after step ${stepNumber}. ${reason}`, 'system');
+    
+    // Add option to continue
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'message-system', 'pause-options');
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-container');
+    
+    const continueButton = document.createElement('button');
+    continueButton.classList.add('btn', 'btn-primary');
+    continueButton.textContent = 'Continue Execution';
+    continueButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Request to continue execution
+        fetch('/api/plan/continue', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id,
+                skip_failed_step: false
+            })
+        })
+        .then(() => {
+            addMessage('Continuing plan execution...', 'system');
+        })
+        .catch(error => {
+            console.error('Error continuing plan:', error);
+        });
+    });
+    
+    const reviseButton = document.createElement('button');
+    reviseButton.classList.add('btn', 'btn-secondary');
+    reviseButton.textContent = 'Revise Plan';
+    reviseButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Get user feedback for revision
+        const feedbackPrompt = document.createElement('div');
+        feedbackPrompt.classList.add('message', 'message-system', 'feedback-prompt');
+        
+        const promptText = document.createElement('p');
+        promptText.textContent = 'Please provide feedback for plan revision:';
+        feedbackPrompt.appendChild(promptText);
+        
+        const feedbackInput = document.createElement('textarea');
+        feedbackInput.rows = 3;
+        feedbackInput.placeholder = 'Enter your feedback or instructions for plan revision...';
+        feedbackPrompt.appendChild(feedbackInput);
+        
+        const submitButton = document.createElement('button');
+        submitButton.classList.add('btn', 'btn-primary');
+        submitButton.textContent = 'Submit Feedback';
+        submitButton.addEventListener('click', () => {
+            const feedback = feedbackInput.value.trim();
+            if (feedback) {
+                feedbackPrompt.remove();
+                
+                // Request plan revision with feedback
+                fetch('/api/plan/reject', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        plan_id: currentPlan.id,
+                        feedback: feedback
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.revised_plan) {
+                        addMessage('Revising plan based on your feedback...', 'system');
+                    } else {
+                        addMessage('Failed to revise plan. Please try again.', 'system');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error revising plan:', error);
+                    addMessage('Error revising plan. Please try again.', 'system');
+                });
+            }
+        });
+        
+        feedbackPrompt.appendChild(submitButton);
+        chatMessages.appendChild(feedbackPrompt);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        feedbackInput.focus();
+    });
+    
+    const abortButton = document.createElement('button');
+    abortButton.classList.add('btn', 'btn-danger');
+    abortButton.textContent = 'Abort Plan';
+    abortButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Request to abort the plan
+        fetch('/api/plan/abort', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id
+            })
+        })
+        .then(() => {
+            addMessage('Plan execution aborted.', 'system');
+        })
+        .catch(error => {
+            console.error('Error aborting plan:', error);
+        });
+    });
+    
+    buttonContainer.appendChild(continueButton);
+    buttonContainer.appendChild(reviseButton);
+    buttonContainer.appendChild(abortButton);
+    messageElement.appendChild(buttonContainer);
+    
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Handle observation required event
+ * @param {Object} data - Observation data
+ */
+function handleObservationRequired(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    const description = data.description;
+    const stdout = data.stdout || '';
+    
+    // Add message about observation
+    addMessage(`Step ${stepNumber} requires your observation: ${description}`, 'assistant');
+    
+    // Show output if any
+    if (stdout) {
+        addMessageWithOutput('Output:', stdout);
+    }
+    
+    // Add observation feedback form
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'message-system', 'observation-required');
+    
+    const messageText = document.createElement('p');
+    messageText.textContent = 'Please make the observation and provide any feedback:';
+    messageElement.appendChild(messageText);
+    
+    const feedbackInput = document.createElement('textarea');
+    feedbackInput.rows = 3;
+    feedbackInput.placeholder = 'Enter your observations or feedback...';
+    messageElement.appendChild(feedbackInput);
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-container');
+    
+    const completeButton = document.createElement('button');
+    completeButton.classList.add('btn', 'btn-primary');
+    completeButton.textContent = 'Complete Observation';
+    completeButton.addEventListener('click', () => {
+        const feedback = feedbackInput.value.trim();
+        messageElement.remove();
+        
+        // Send observation completion to server
+        fetch('/api/step/observation', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id,
+                step_index: stepIndex,
+                feedback: feedback
+            })
+        })
+        .then(() => {
+            addMessage(`Observation completed${feedback ? ': ' + feedback : '.'}`, 'system');
+        })
+        .catch(error => {
+            console.error('Error completing observation:', error);
+        });
+    });
+    
+    buttonContainer.appendChild(completeButton);
+    messageElement.appendChild(buttonContainer);
+    
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    feedbackInput.focus();
+}
+
+/**
+ * Add step feedback option
+ * @param {Object} data - Step data
+ */
+function addStepFeedbackOption(data) {
+    const stepIndex = data.step_index;
+    const stepNumber = stepIndex + 1;
+    
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'message-system', 'step-feedback');
+    
+    const messageText = document.createElement('p');
+    messageText.textContent = `How would you like to proceed after step ${stepNumber}?`;
+    messageElement.appendChild(messageText);
+    
+    const feedbackInput = document.createElement('input');
+    feedbackInput.type = 'text';
+    feedbackInput.placeholder = 'Optional feedback...';
+    messageElement.appendChild(feedbackInput);
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-container');
+    
+    const continueButton = document.createElement('button');
+    continueButton.classList.add('btn', 'btn-primary');
+    continueButton.textContent = 'Continue';
+    continueButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Send feedback and continue
+        fetch('/api/step/feedback', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id,
+                step_index: stepIndex,
+                feedback: feedbackInput.value.trim(),
+                continue_execution: true
+            })
+        })
+        .then(() => {
+            if (feedbackInput.value.trim()) {
+                addMessage(`Continuing with feedback: ${feedbackInput.value.trim()}`, 'system');
+            } else {
+                addMessage('Continuing to next step...', 'system');
+            }
+        })
+        .catch(error => {
+            console.error('Error sending feedback:', error);
+        });
+    });
+    
+    const pauseButton = document.createElement('button');
+    pauseButton.classList.add('btn', 'btn-secondary');
+    pauseButton.textContent = 'Pause Execution';
+    pauseButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        // Send feedback and pause
+        fetch('/api/step/feedback', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id,
+                step_index: stepIndex,
+                feedback: feedbackInput.value.trim(),
+                continue_execution: false
+            })
+        })
+        .then(() => {
+            addMessage('Pausing execution. You can continue or revise the plan when ready.', 'system');
+        })
+        .catch(error => {
+            console.error('Error sending feedback:', error);
+        });
+    });
+    
+    const reviseButton = document.createElement('button');
+    reviseButton.classList.add('btn', 'btn-danger');
+    reviseButton.textContent = 'Revise Plan';
+    reviseButton.addEventListener('click', () => {
+        messageElement.remove();
+        
+        const feedback = feedbackInput.value.trim() || 'User requested revision after step completion';
+        
+        // Request plan revision
+        fetch('/api/plan/reject', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                plan_id: currentPlan.id,
+                feedback: feedback
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            addMessage('Requesting plan revision...', 'system');
+            if (data.revised_plan) {
+                currentPlan = data.revised_plan;
+                showPlanReview(data.revised_plan);
+            }
+        })
+        .catch(error => {
+            console.error('Error revising plan:', error);
+        });
+    });
+    
+    buttonContainer.appendChild(continueButton);
+    buttonContainer.appendChild(pauseButton);
+    buttonContainer.appendChild(reviseButton);
+    messageElement.appendChild(buttonContainer);
+    
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 /**

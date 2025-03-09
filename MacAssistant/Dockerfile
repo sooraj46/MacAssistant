@@ -17,9 +17,11 @@ ENV SECRET_KEY=change-this-in-production
 ENV LOG_DIR=logs
 ENV LOG_LEVEL=INFO
 ENV MAX_EXECUTION_TIME=300
+ENV HUMAN_VALIDATION_REQUIRED=True
+ENV LLM_VERIFY_RESULTS=True
 
 # Expose port
 EXPOSE 5000
 
-# Run the application
-CMD ["python", "app.py"]
+# Run the application with gunicorn for production
+CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", "--bind", "0.0.0.0:5000", "app:app"]

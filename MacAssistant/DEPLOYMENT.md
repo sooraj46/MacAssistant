@@ -21,6 +21,8 @@ The simplest deployment is running MacAssistant locally on your Mac.
    LOG_DIR=logs
    LOG_LEVEL=INFO
    MAX_EXECUTION_TIME=300
+   HUMAN_VALIDATION_REQUIRED=True
+   LLM_VERIFY_RESULTS=True
    ```
 
 3. Run the application:
@@ -36,47 +38,14 @@ Using Docker provides better isolation and makes it easier to deploy on differen
 
 ### Steps:
 
-1. Create a Dockerfile in the project root:
+1. Create a `.env` file with your Google API key as shown above
 
-```dockerfile
-FROM python:3.9-slim
-WORKDIR /app
-
-# Install dependencies
-COPY MacAssistant/backend/requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy backend code
-COPY MacAssistant/backend /app/
-
-# Create logs directory
-RUN mkdir -p logs
-
-# Set environment variables
-ENV FLASK_ENV=production
-ENV SECRET_KEY=change-this-in-production
-ENV LOG_DIR=logs
-ENV LOG_LEVEL=INFO
-ENV MAX_EXECUTION_TIME=300
-
-# Expose port
-EXPOSE 5000
-
-# Run the application
-CMD ["python", "app.py"]
-```
-
-2. Build the Docker image:
+2. Run the Docker deployment script:
    ```bash
-   docker build -t macassistant .
+   ./deploy-docker.sh
    ```
 
-3. Run the Docker container:
-   ```bash
-   docker run -p 5000:5000 --env-file .env macassistant
-   ```
-
-4. Access the application at `http://localhost:5000`
+3. Access the application at `http://localhost:5000`
 
 ## 3. Heroku Deployment
 
@@ -84,130 +53,45 @@ Heroku offers simple cloud deployment.
 
 ### Steps:
 
-1. Install the Heroku CLI and login:
+1. Run the Heroku deployment script:
    ```bash
-   brew install heroku
-   heroku login
+   ./deploy-heroku.sh
    ```
 
-2. Create a new Heroku app:
-   ```bash
-   heroku create macassistant
-   ```
+2. Follow the prompts to create your app and enter your Google API key
 
-3. Create a Procfile in the project root:
-   ```
-   web: cd MacAssistant/backend && python app.py
-   ```
+3. Access your app at the provided Heroku URL
 
-4. Add a runtime.txt file:
-   ```
-   python-3.9.13
-   ```
+## Configuration Options
 
-5. Set environment variables:
-   ```bash
-   heroku config:set FLASK_ENV=production
-   heroku config:set SECRET_KEY=your-secret-key-here
-   heroku config:set GOOGLE_API_KEY=your-google-api-key-here
-   heroku config:set GEMINI_MODEL=gemini-2.0-flash-thinking-exp-01-21
-   heroku config:set LOG_DIR=logs
-   heroku config:set LOG_LEVEL=INFO
-   heroku config:set MAX_EXECUTION_TIME=300
-   ```
+### Human-in-the-Loop Settings
 
-6. Deploy to Heroku:
-   ```bash
-   git push heroku main
-   ```
+MacAssistant now includes enhanced human-in-the-loop features that can be configured through environment variables:
 
-7. Open the application:
-   ```bash
-   heroku open
-   ```
+* `HUMAN_VALIDATION_REQUIRED` (True/False):
+  - When True, the assistant will pause after each step for user feedback
+  - When False, the assistant will continue automatically, but still pause on errors
 
-## 4. AWS Elastic Beanstalk Deployment
+* `LLM_VERIFY_RESULTS` (True/False):
+  - When True, the LLM will analyze each command's output to verify success
+  - When False, success is determined solely by the command's return code
 
-AWS Elastic Beanstalk provides a managed platform for running web applications.
+### Setting Environment Variables
 
-### Steps:
+#### Local
+Edit the `.env` file in your project root
 
-1. Install the AWS CLI and EB CLI:
-   ```bash
-   pip install awscli awsebcli
-   ```
+#### Docker
+Edit the `.env` file, or adjust settings in `docker-compose.yml`
 
-2. Configure AWS credentials:
-   ```bash
-   aws configure
-   ```
-
-3. Initialize EB application:
-   ```bash
-   eb init -p python-3.9 macassistant
-   ```
-
-4. Create an application.py file in the MacAssistant/backend directory:
-   ```python
-   from app import app as application
-   
-   if __name__ == "__main__":
-       application.run()
-   ```
-
-5. Make sure the backend/requirements.txt file includes all dependencies.
-
-6. Create a .ebextensions/01_flask.config file:
-   ```yaml
-   option_settings:
-     aws:elasticbeanstalk:container:python:
-       WSGIPath: MacAssistant/backend/application.py
-     aws:elasticbeanstalk:application:environment:
-       FLASK_ENV: production
-       SECRET_KEY: your-secret-key-here
-       GOOGLE_API_KEY: your-google-api-key-here
-       GEMINI_MODEL: gemini-2.0-flash-thinking-exp-01-21
-       LOG_DIR: logs
-       LOG_LEVEL: INFO
-       MAX_EXECUTION_TIME: 300
-   ```
-
-7. Create an environment and deploy:
-   ```bash
-   eb create macassistant-env
-   ```
-
-8. Open the application:
-   ```bash
-   eb open
-   ```
-
-## Project Structure
-
-```
-MacAssistant/
-├── backend/                  # Flask backend server
-│   ├── app.py                # Main application entry point
-│   ├── config.py             # Configuration handling
-│   ├── modules/              # Backend modules
-│   │   ├── agent_orchestrator.py
-│   │   ├── command_generator.py
-│   │   ├── execution_engine.py
-│   │   ├── llm_integration.py
-│   │   ├── logger.py
-│   │   └── safety_checker.py
-│   ├── static/               # Static files (CSS, JavaScript)
-│   ├── templates/            # HTML templates
-│   └── requirements.txt      # Python dependencies
-├── build.sh                  # Production build script
-├── run.sh                    # Production run script
-├── start-dev.sh              # Development mode script
-└── .env.example              # Example environment variables
+#### Heroku
+Set environment variables using the Heroku CLI:
+```bash
+heroku config:set HUMAN_VALIDATION_REQUIRED=True --app your-app-name
+heroku config:set LLM_VERIFY_RESULTS=True --app your-app-name
 ```
 
-## Important Security Considerations
-
-For any deployment option:
+## Security Considerations
 
 1. Never commit API keys or sensitive information to the repository
 2. Use environment variables for configuration
@@ -218,8 +102,24 @@ For any deployment option:
 
 ## Production Considerations
 
-1. Use a production-ready WSGI server like Gunicorn or uWSGI instead of Flask's built-in server
+1. MacAssistant now uses Gunicorn with eventlet worker for production
 2. Set up proper logging and monitoring
 3. Implement error tracking
 4. Configure proper SSL/TLS certificates
 5. Implement rate limiting to protect against abuse
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Missing Dependencies**: If you encounter errors about missing dependencies, make sure you've run the build script and installed all required packages.
+
+2. **API Key Issues**: Verify that your Google API key is correctly set in your environment variables. Make sure it has access to the Gemini API.
+
+3. **Permission Errors**: Make sure your application has permission to write to the logs directory.
+
+4. **Docker Issues**: If using Docker, make sure Docker is running and you have the necessary permissions.
+
+### Getting Help
+
+If you encounter issues not covered in this guide, check the project's GitHub repository for known issues, or open a new issue with details about your problem.

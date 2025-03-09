@@ -13,6 +13,8 @@ services:
       - LOG_DIR=logs
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - MAX_EXECUTION_TIME=${MAX_EXECUTION_TIME:-300}
+      - HUMAN_VALIDATION_REQUIRED=${HUMAN_VALIDATION_REQUIRED:-True}
+      - LLM_VERIFY_RESULTS=${LLM_VERIFY_RESULTS:-True}
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped

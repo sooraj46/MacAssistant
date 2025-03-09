@@ -47,6 +47,10 @@ class Config:
     
     # System configuration
     MAX_EXECUTION_TIME = int(os.environ.get('MAX_EXECUTION_TIME', 300))  # seconds
+    
+    # User interaction configuration
+    HUMAN_VALIDATION_REQUIRED = os.environ.get('HUMAN_VALIDATION_REQUIRED', 'True').lower() == 'true'
+    LLM_VERIFY_RESULTS = os.environ.get('LLM_VERIFY_RESULTS', 'True').lower() == 'true'
 
 class DevelopmentConfig(Config):
     """Development configuration."""
