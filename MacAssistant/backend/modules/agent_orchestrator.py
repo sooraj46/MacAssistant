@@ -115,29 +115,18 @@ class AgentOrchestrator:
             
         print(f"DEBUG: Final command to execute: '{command}'")
         
-        # Check if command is risky
-        is_risky = step.get('is_risky', False) or self.safety_checker.is_risky(command)
-        
-        if is_risky:
-            # Store command for confirmation
-            command_id = f"{plan_id}_{step_index}"
-            self.pending_commands[command_id] = {
-                'plan_id': plan_id,
-                'step_index': step_index,
-                'command': command
-            }
-            
-            # Mark step as awaiting confirmation
-            step['status'] = 'awaiting_confirmation'
+        # Check command safety explicitly
+        if not self.safety_checker.is_safe(command):
+            self.logger.log_error(f"Unsafe command detected: {command}")
+            step['status'] = 'blocked'
             self._emit_status_update(plan_id, {
-                'event': 'risky_command',
-                'command_id': command_id,
+                'event': 'unsafe_command_blocked',
                 'command': command,
                 'step_description': step['description']
             })
-        else:
-            # Execute command directly
-            self._execute_command_internal(plan_id, step_index, command)
+            return
+        # Execute command directly
+        self._execute_command_internal(plan_id, step_index, command)
     
     def execute_command(self, command_id):
         """
@@ -384,7 +373,7 @@ class AgentOrchestrator:
         
         return revised_plan
     
-    def abort_plan(self, plan_id):
+    def abort_execution(self, plan_id):
         """
         Abort a plan execution.
         
@@ -401,7 +390,7 @@ class AgentOrchestrator:
         plan['status'] = 'aborted'
         
         # Log the abort
-        self.logger.log_plan_abort(plan_id)
+        self.logger.log_info(f"plan_aborted: {{'plan_id': '{plan_id}'}}")
         
         # Emit status update
         self._emit_status_update(plan_id, {
@@ -410,6 +399,51 @@ class AgentOrchestrator:
         
         # Remove from active plans
         del self.active_plans[plan_id]
+    
+    def continue_execution(self, plan_id, skip_failed_step=False):
+        """
+        Continue executing a plan after a failure or interruption.
+        
+        Args:
+            plan_id (str): The ID of the plan to continue
+            skip_failed_step (bool): Whether to skip the failed step and continue with the next step
+        """
+        # Get the plan
+        plan = self.active_plans.get(plan_id)
+        if not plan:
+            self.logger.log_error(f"Plan with ID {plan_id} not found")
+            return
+        
+        # Find the failed or interrupted step
+        current_step_index = None
+        for i, step in enumerate(plan['steps']):
+            if step['status'] in ['failed', 'executing', 'awaiting_confirmation']:
+                current_step_index = i
+                break
+                
+        if current_step_index is None:
+            self.logger.log_error(f"No failed or interrupted step found in plan {plan_id}")
+            return
+        
+        # Log the continuation
+        self.logger.log_info(f"plan_continued: {{'plan_id': '{plan_id}', 'skip_failed_step': {skip_failed_step}}}")
+        
+        # Mark the step as skipped if needed
+        if skip_failed_step:
+            plan['steps'][current_step_index]['status'] = 'skipped'
+            current_step_index += 1  # Move to the next step
+        
+        # Update plan status
+        plan['status'] = 'executing'
+        
+        # Emit status update
+        self._emit_status_update(plan_id, {
+            'event': 'plan_continued',
+            'skip_failed_step': skip_failed_step
+        })
+        
+        # Continue execution
+        self._execute_step(plan_id, current_step_index)
     
     def _complete_plan(self, plan_id):
         """

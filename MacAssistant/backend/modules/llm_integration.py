@@ -315,6 +315,116 @@ class LLMIntegration:
             'status': 'generated'
         }
         
+    def revise_failed_step(self, plan_id, failed_step_index, stdout, stderr):
+        """
+        Revise a plan when a specific step has failed.
+        
+        Args:
+            plan_id (str): The ID of the plan to revise
+            failed_step_index (int): Index of the step that failed
+            stdout (str): Standard output from the failed command
+            stderr (str): Standard error from the failed command
+            
+        Returns:
+            dict: A revised plan
+        """
+        # Get the original plan
+        original_plan = self.plans.get(plan_id)
+        if not original_plan:
+            raise ValueError(f"Plan with ID {plan_id} not found")
+            
+        # Get the failed step
+        failed_step = original_plan['steps'][failed_step_index]
+        
+        # System prompt for plan revision after step failure
+        system_prompt = """
+        You are MacAssistant, an AI that revises executable plans for macOS tasks when a step fails.
+
+        CAPABILITIES:
+        You can generate plans with commands that:
+        1. Execute shell commands (ls, grep, find, etc.)
+        2. Open applications (using 'open -a AppName')
+        3. Manipulate files and directories
+        4. Check system information
+        5. Work with standard macOS utilities
+
+        INSTRUCTIONS:
+        Given the original plan and the failed step details:
+        1. Analyze the error and determine what went wrong
+        2. Create a REVISED plan that addresses the failure
+        3. You can modify the failed step, add more steps before/after it, or completely change the approach
+        4. For each step, include BOTH a human-readable description AND an executable macOS command
+        5. Mark any potentially risky operations with [RISKY] at the beginning of the step
+        6. For steps that require human observation, mark with [OBSERVE]
+        7. EXPLAIN your changes in a brief summary at the beginning
+        
+        FORMAT YOUR RESPONSE AS:
+        REVISION SUMMARY: <brief explanation of changes made to the plan>
+        
+        <step number>. <description>
+        COMMAND: <shell command or script>
+        
+        <step number>. <description>
+        COMMAND: <shell command or script>
+        ...
+        """
+        
+        # Build a detailed user message with plan and error details
+        user_message = "ORIGINAL PLAN:\n"
+        
+        # Format original plan steps
+        for i, step in enumerate(original_plan['steps']):
+            prefix = ""
+            if i == failed_step_index:
+                prefix = "FAILED STEP: "
+            
+            user_message += f"{prefix}{step['number']}. {step['description']}\n"
+            if 'command' in step and step['command']:
+                user_message += f"COMMAND: {step['command']}\n"
+            
+            # Add failure details for the failed step
+            if i == failed_step_index:
+                user_message += "FAILURE DETAILS:\n"
+                if stdout:
+                    user_message += f"STDOUT: {stdout}\n"
+                if stderr:
+                    user_message += f"STDERR: {stderr}\n"
+            
+            user_message += "\n"
+        
+        user_message += "Please revise the plan to address the issue with the failed step. The revision should solve the problem and allow the task to be completed successfully."
+        
+        # Send request to Gemini
+        response = self._call_gemini_api(system_prompt, user_message)
+        logger.info(f"Revised plan response for failed step: {response}")
+        
+        # Parse the response to extract the revised plan
+        revised_plan = self._parse_plan_with_commands(response)
+        
+        # Extract any revision summary
+        summary = ""
+        if "REVISION SUMMARY:" in response:
+            summary_parts = response.split("REVISION SUMMARY:", 1)
+            if len(summary_parts) > 1:
+                summary_text = summary_parts[1].strip()
+                # Take everything up to the first numbered step
+                for line in summary_text.split('\n'):
+                    if line.strip() and line[0].isdigit() and '.' in line:
+                        break
+                    summary += line + "\n"
+                summary = summary.strip()
+                
+        # Store the revision summary
+        revised_plan['revision_summary'] = summary
+                
+        # Store the revised plan
+        revised_plan_id = str(hash(json.dumps(revised_plan)))
+        self.plans[revised_plan_id] = revised_plan
+        revised_plan['id'] = revised_plan_id
+        revised_plan['original_plan_id'] = plan_id
+        
+        return revised_plan
+        
     def _parse_plan(self, response):
         """
         Legacy method to parse plans without commands.

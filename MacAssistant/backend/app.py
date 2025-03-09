@@ -111,6 +111,73 @@ def confirm_risky_command():
         agent_orchestrator.skip_command(command_id)
         return jsonify({'status': 'command_skipped'})
 
+@app.route('/api/plan/revise', methods=['POST'])
+def revise_plan_on_failure():
+    """Handle plan revision request after a step failure."""
+    data = request.json
+    plan_id = data.get('plan_id')
+    failed_step_index = data.get('failed_step_index')
+    stdout = data.get('stdout', '')
+    stderr = data.get('stderr', '')
+    
+    # Log the plan revision request
+    logger.log_info(f"plan_revision_requested: {json.dumps({'plan_id': plan_id, 'failed_step_index': failed_step_index})}")
+    
+    # Request a revised plan from the LLM
+    revised_plan = llm_integration.revise_failed_step(plan_id, failed_step_index, stdout, stderr)
+    
+    if revised_plan:
+        # Log the revised plan
+        logger.log_info(f"plan_revised: {json.dumps({'plan_id': plan_id, 'revised_plan_id': revised_plan['id']})}")
+        
+        # Notify the client about the revision
+        socketio.emit('execution_update', {
+            'event': 'plan_revised',
+            'plan_id': plan_id,
+            'revised_plan': revised_plan,
+            'revision_summary': f"Plan revised to handle failure at step {failed_step_index + 1}",
+            'requires_review': True
+        })
+        
+        return jsonify({'revised_plan': revised_plan})
+    
+    return jsonify({'status': 'revision_failed'})
+
+@app.route('/api/plan/continue', methods=['POST'])
+def continue_plan():
+    """Handle continuing a plan after a step failure or other interruption."""
+    data = request.json
+    plan_id = data.get('plan_id')
+    skip_failed_step = data.get('skip_failed_step', False)
+    
+    # Log the continue plan request
+    logger.log_info(f"plan_continue_requested: {json.dumps({'plan_id': plan_id, 'skip_failed_step': skip_failed_step})}")
+    
+    # Ask the agent orchestrator to continue execution
+    agent_orchestrator.continue_execution(plan_id, skip_failed_step)
+    
+    return jsonify({'status': 'execution_continued'})
+
+@app.route('/api/plan/abort', methods=['POST'])
+def abort_plan():
+    """Handle aborting a plan execution."""
+    data = request.json
+    plan_id = data.get('plan_id')
+    
+    # Log the abort plan request
+    logger.log_info(f"plan_abort_requested: {json.dumps({'plan_id': plan_id})}")
+    
+    # Ask the agent orchestrator to abort execution
+    agent_orchestrator.abort_execution(plan_id)
+    
+    # Notify the client
+    socketio.emit('execution_update', {
+        'event': 'plan_aborted',
+        'plan_id': plan_id
+    })
+    
+    return jsonify({'status': 'execution_aborted'})
+
 @app.route('/api/plan/<plan_id>', methods=['GET'])
 def get_plan(plan_id):
     """Get a specific plan by ID."""

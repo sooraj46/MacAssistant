@@ -496,6 +496,9 @@ function handleStepFailed(data) {
     } else {
         addMessageWithOutput('Error:', 'Unknown error occurred', true);
     }
+    
+    // Add revise plan option
+    addRevisionOption(data);
 }
 
 /**
@@ -518,6 +521,24 @@ function handlePlanAborted() {
  */
 function handlePlanRevised(data) {
     addMessage('Plan has been revised based on execution results.', 'system');
+    
+    // Update the current plan if provided
+    if (data.revised_plan) {
+        currentPlan = data.revised_plan;
+        
+        // Show the changes made in the revision
+        if (data.revision_summary) {
+            addMessage(`Revision summary: ${data.revision_summary}`, 'assistant');
+        }
+        
+        // If the plan is not already executing, show it for review
+        if (data.requires_review) {
+            addMessage('Please review the revised plan:', 'assistant');
+            showPlanReview(data.revised_plan);
+        } else {
+            addMessage('Continuing execution with the revised plan...', 'system');
+        }
+    }
 }
 
 /**
@@ -527,4 +548,134 @@ function handlePlanRevised(data) {
 function updateExecutionStatus(data) {
     // This function could update a progress indicator or status display
     console.log('Status update:', data);
+}
+
+/**
+ * Add revision option when a step fails
+ * @param {Object} data - The step data that failed
+ */
+function addRevisionOption(data) {
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message', 'message-system', 'revision-option');
+    
+    const messageText = document.createElement('p');
+    messageText.textContent = 'Would you like to revise the plan to handle this error?';
+    messageElement.appendChild(messageText);
+    
+    const buttonContainer = document.createElement('div');
+    buttonContainer.classList.add('button-container');
+    
+    const reviseButton = document.createElement('button');
+    reviseButton.classList.add('btn', 'btn-primary');
+    reviseButton.textContent = 'Revise Plan';
+    reviseButton.addEventListener('click', () => requestPlanRevision(data));
+    
+    const continueButton = document.createElement('button');
+    continueButton.classList.add('btn', 'btn-secondary');
+    continueButton.textContent = 'Continue Without Revision';
+    continueButton.addEventListener('click', () => {
+        messageElement.remove();
+        addMessage('Continuing with the remaining steps...', 'system');
+        
+        // Notify server to continue without revision
+        fetch('/api/plan/continue', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 
+                plan_id: currentPlan.id,
+                skip_failed_step: true
+            })
+        })
+        .catch(error => {
+            console.error('Error continuing plan:', error);
+        });
+    });
+    
+    const abortButton = document.createElement('button');
+    abortButton.classList.add('btn', 'btn-danger');
+    abortButton.textContent = 'Abort Plan';
+    abortButton.addEventListener('click', () => {
+        messageElement.remove();
+        addMessage('Plan execution aborted.', 'system');
+        
+        // Notify server to abort plan
+        fetch('/api/plan/abort', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ plan_id: currentPlan.id })
+        })
+        .catch(error => {
+            console.error('Error aborting plan:', error);
+        });
+    });
+    
+    buttonContainer.appendChild(reviseButton);
+    buttonContainer.appendChild(continueButton);
+    buttonContainer.appendChild(abortButton);
+    messageElement.appendChild(buttonContainer);
+    
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+/**
+ * Request a plan revision after a step failure
+ * @param {Object} data - The step data that failed
+ */
+function requestPlanRevision(data) {
+    // Remove the revision option message
+    const revisionOption = document.querySelector('.revision-option');
+    if (revisionOption) {
+        revisionOption.remove();
+    }
+    
+    // Show revision request message
+    addMessage('Requesting plan revision based on the error...', 'system');
+    
+    // Add typing indicator
+    const typingIndicator = addMessage('Revising plan...', 'system', 'typing-indicator');
+    
+    // Request plan revision from server
+    fetch('/api/plan/revise', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            plan_id: currentPlan.id,
+            failed_step_index: data.step_index,
+            stdout: data.stdout,
+            stderr: data.stderr
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Remove typing indicator
+        typingIndicator.remove();
+        
+        // Handle revised plan
+        if (data.revised_plan) {
+            // Store the revised plan
+            currentPlan = data.revised_plan;
+            
+            // Show revised plan message
+            addMessage('I\'ve revised the plan to handle the error. Here\'s the revised plan:', 'assistant');
+            
+            // Display revised plan for review
+            showPlanReview(data.revised_plan);
+        } else {
+            addMessage('Sorry, I couldn\'t revise the plan based on the error. You can try providing more specific instructions.', 'assistant');
+        }
+    })
+    .catch(error => {
+        // Remove typing indicator
+        typingIndicator.remove();
+        
+        console.error('Error revising plan:', error);
+        addMessage('Sorry, there was an error revising the plan. Please try again.', 'system');
+    });
 }

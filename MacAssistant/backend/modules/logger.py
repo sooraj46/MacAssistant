@@ -190,6 +190,27 @@ class Logger:
         """
         self._log_event('error', {'message': message})
         self.logger.error(message)
+        
+    def log_info(self, message):
+        """
+        Log an informational message.
+        
+        Args:
+            message (str): The message to log
+        """
+        # Parse message for event type if it's formatted as "event_type: data"
+        if ': ' in message and message.split(': ')[1].startswith('{'):
+            parts = message.split(': ', 1)
+            event_type = parts[0]
+            try:
+                data = json.loads(parts[1])
+                self._log_event(event_type, data)
+            except json.JSONDecodeError:
+                self._log_event('info', {'message': message})
+        else:
+            self._log_event('info', {'message': message})
+            
+        self.logger.info(message)
     
     def get_logs(self, log_type='all', start_date=None, end_date=None):
         """
