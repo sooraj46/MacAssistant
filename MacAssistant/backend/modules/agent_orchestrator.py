@@ -292,6 +292,8 @@ class AgentOrchestrator:
                 'explanation': verification.get('explanation', ''),
                 'continue_automatically': not active_config.HUMAN_VALIDATION_REQUIRED
             })
+
+            self._summarize_and_update_plan(plan_id, step_index)
             
             # If human validation is required globally, don't auto-continue
             if active_config.HUMAN_VALIDATION_REQUIRED:
@@ -347,47 +349,43 @@ class AgentOrchestrator:
                 'suggestion': verification.get('suggestion', '')
             })
     
-    def _attempt_plan_revision(self, plan_id, step_index, error_message):
+    def _summarize_and_update_plan(self, plan_id, completed_step_index):
         """
-        Attempt to automatically revise a plan after a step failure.
-        
-        Args:
-            plan_id (str): The ID of the plan
-            step_index (int): The index of the failed step
-            error_message (str): The error message
+        Summarize progress so far and update the plan/next steps
+        based on the LLM response.
         """
-        # Get the plan
         plan = self.active_plans.get(plan_id)
         if not plan:
-            self.logger.log_error(f"Plan with ID {plan_id} not found")
             return
-            
-        # Generate feedback for revision based on the error
-        step = plan['steps'][step_index]
         
-        feedback = f"Step {step['number']} failed with error: {error_message}. "
-        feedback += "Please revise the plan to fix this issue. "
-        feedback += f"The failing command was: {step['command']}."
-        
-        # Emit status update for auto-repair attempt
+        # Gather partial context
+        steps_so_far = plan['steps'][:completed_step_index + 1]
+        step_results = plan.get('step_results', {})
+
+        # Possibly gather the steps that remain
+        remaining_steps = plan['steps'][completed_step_index + 1:]
+
+        # Call a new method in llm_integration that returns a summary + updated steps
+        # Something like: summary, updated_steps = self.llm_integration.summarize_progress_and_update_plan(steps_so_far, step_results, remaining_steps)
+        summary, updated_steps = self.llm_integration.summarize_progress_and_update_plan(steps_so_far, step_results, remaining_steps)
+
+        # Store the summary in the plan if you like
+        plan['progress_summary'] = summary
+
+        # If updated_steps is not None, it means the LLM is giving new instructions for the next steps
+        if updated_steps:
+            # Overwrite the plan’s next steps
+            # e.g., if updated_steps is a full steps list, replace everything from completed_step_index + 1 onward
+            new_plan_steps = plan['steps'][:completed_step_index + 1] + updated_steps
+            plan['steps'] = new_plan_steps
+
+        # Optionally emit a status update so the UI can see the new plan
         self._emit_status_update(plan_id, {
-            'event': 'auto_repair_attempt',
-            'step_index': step_index,
-            'error': error_message
+            'event': 'progress_summarized',
+            'summary': summary,
+            'updated_steps': updated_steps
         })
-        
-        # Try to revise the plan automatically
-        try:
-            self.request_revision(plan_id, feedback, auto_revision=True)
-        except Exception as e:
-            self.logger.log_error(f"Auto-repair failed: {str(e)}")
-            # Fall back to manual intervention notification
-            self._emit_status_update(plan_id, {
-                'event': 'auto_repair_failed',
-                'step_index': step_index,
-                'error': str(e)
-            })
-    
+
     def request_revision(self, plan_id, feedback, auto_revision=False):
         """
         Request a revision of a plan.
@@ -708,3 +706,5 @@ class AgentOrchestrator:
         
         # Emit the update
         emit('execution_update', update_data, namespace='/', broadcast=True)
+
+    

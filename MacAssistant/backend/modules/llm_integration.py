@@ -7,6 +7,7 @@ import asyncio
 import os
 import json
 import logging
+import re
 import google.genai as genai
 import google.genai.types as types # Fixed import
 from config import active_config
@@ -298,10 +299,6 @@ class LLMIntegration:
         
         # Parse the JSON response
         try:
-            # Find JSON in the response (in case LLM adds explanatory text)
-            import re
-            import json
-            
             json_match = re.search(r'({[\s\S]*})', response)
             if json_match:
                 json_str = json_match.group(1)
@@ -587,15 +584,79 @@ class LLMIntegration:
         logger.warning(f"Plan {plan_id} not found in memory or on disk")
         return None
     
-    def _parse_plan(self, response):
+    def summarize_progress_and_update_plan(self, steps_so_far, step_results, remaining_steps):
         """
-        Legacy method to parse plans without commands.
-        Now forwards to _parse_plan_with_commands.
-        
-        Args:
-            response (str): The LLM response text
+        1) Summarize the completed steps (including their stdout/stderr).
+        2) Potentially update the remaining steps.
+        Returns (summary_text, updated_steps)
+        """
+        # Build a textual summary for the LLM:
+        # e.g., for each step in steps_so_far, gather "Step X description, status, output"
+        executed_info = []
+        for step in steps_so_far:
+            n = step.get('number')
+            desc = step.get('description', '')
+            status = step.get('status', 'unknown')
             
-        Returns:
-            dict: A structured plan with steps
+            # Pull from step_results if present
+            sr_key = str(n)
+            sr = step_results.get(sr_key, {})
+            stdout = sr.get('stdout', '')
+            stderr = sr.get('stderr', '')
+            
+            executed_info.append(f"Step {n} ({status}): {desc}\nOutput: {stdout}\nErrors: {stderr}")
+
+        progress_text = "\n".join(executed_info)
+
+        # Also gather info about upcoming steps (remaining_steps)
+        upcoming_desc = []
+        for st in remaining_steps:
+            upcoming_desc.append(f"Step {st['number']}: {st['description']}")
+
+        upcoming_text = "\n".join(upcoming_desc)
+
+        # Prepare prompt
+        system_prompt = """
+        You are a summarization assistant. Given the history of executed steps and the remaining steps,
+        provide two things: 
+        1) A short summary of what has been done so far.
+        2) Updated or revised steps for the remaining plan if needed.
+        
+        Return JSON with keys "summary" and "updated_steps".
+        "updated_steps" can be an array of step objects like:
+        [
+        {
+            "number": 3,
+            "description": "New desc",
+            "command": "ls -la"
+        },
+        ...
+        ]
+        If no changes are needed to the next steps, just repeat them.
         """
-        return self._parse_plan_with_commands(response)
+
+        user_content = f"""
+        Executed Steps So Far:
+        {progress_text}
+
+        Upcoming Steps:
+        {upcoming_text}
+        """
+
+        # Call LLM
+        response = self._call_gemini_api(system_prompt, user_content)
+
+        # Parse JSON from the response
+        import re, json
+        match = re.search(r'{[\s\S]*}', response)
+        if match:
+            try:
+                data = json.loads(match.group(0))
+                summary = data.get('summary', 'No summary provided.')
+                updated_steps = data.get('updated_steps', [])
+                return summary, updated_steps
+            except:
+                pass
+
+        # Fallback
+        return "Could not parse summary", remaining_steps

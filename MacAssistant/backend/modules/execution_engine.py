@@ -54,6 +54,8 @@ class ExecutionEngine:
             tuple: (success, stdout, stderr)
         """
         try:
+            execution_location = os.environ.get('EXECUTION_LOCATION', None)
+            
             # Check for unsubstituted placeholders or typical LLM formatting issues
             if "{" in command and "}" in command:
                 logger.error(f"Command contains unsubstituted placeholder: {command}")
@@ -88,7 +90,8 @@ class ExecutionEngine:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     shell=True,
-                    text=True
+                    text=True,
+                    cwd=execution_location
                 )
             else:
                 try:
@@ -98,7 +101,8 @@ class ExecutionEngine:
                         args,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        text=True
+                        text=True,
+                        cwd=execution_location
                     )
                 except Exception as e:
                     logger.error(f"Error splitting command: {e}")
@@ -108,7 +112,8 @@ class ExecutionEngine:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         shell=True,
-                        text=True
+                        text=True,
+                        cwd=execution_location
                     )
             
             # Set a timeout for the command
@@ -150,6 +155,8 @@ class ExecutionEngine:
             tuple: (success, stdout, stderr)
         """
         try:
+            execution_location = os.environ.get('EXECUTION_LOCATION', None)
+            
             # Check if the script is already an osascript command
             if script.strip().startswith('osascript'):
                 return self._execute_shell_command(script)
@@ -163,7 +170,8 @@ class ExecutionEngine:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 shell=True,
-                text=True
+                text=True,
+                cwd=execution_location
             )
             
             # Set a timeout for the command

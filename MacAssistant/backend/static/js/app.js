@@ -162,6 +162,9 @@ function setupSocketEvents() {
                 case 'plan_revised':
                     handlePlanRevised(data);
                     break;
+                case 'execution_update':
+                    handleExecutionUpdate(data);
+                    break;
                 default:
                     // General status update
                     updateExecutionStatus(data);
@@ -959,6 +962,18 @@ function handleCommandRejectionOptions(data) {
     chatMessages.appendChild(messageElement);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
+
+/**
+ * Handle execution status update
+ * @param {Object} data - Status data
+ */
+function handleExecutionUpdate(data) {
+    const status_update = data.status || 'No status update provided.';
+      
+    // For example, show the summary in the chat:
+    addMessage(`Progress Update:\n${status_update}`, 'assistant');
+  
+  }
 
 /**
  * Handle plan paused state
