@@ -64,8 +64,7 @@ For development, you can run both the frontend and backend in development mode:
 ```
 
 This will start:
-- Backend at http://localhost:5000
-- Frontend at http://localhost:3000
+http://localhost:5000
 
 ## Usage
 
@@ -82,40 +81,6 @@ This will start:
 - Command injection is prevented through proper input sanitization
 - No sensitive data is stored or transmitted outside your machine
 
-## Development
-
-### Project Structure
-
-```
-MacAssistant/
-├── backend/                  # Flask backend server
-│   ├── app.py                # Main application entry point
-│   ├── config.py             # Configuration handling
-│   ├── modules/              # Backend modules
-│   │   ├── agent_orchestrator.py
-│   │   ├── command_generator.py
-│   │   ├── execution_engine.py
-│   │   ├── llm_integration.py
-│   │   ├── logger.py
-│   │   └── safety_checker.py
-│   ├── static/               # Static files (CSS, JavaScript)
-│   ├── templates/            # HTML templates
-│   └── requirements.txt      # Python dependencies
-├── frontend/                 # React frontend
-│   ├── public/               # Public assets
-│   ├── src/                  # Source code
-│   │   ├── components/       # React components
-│   │   ├── styles/           # Styling
-│   │   ├── App.js            # Main application component
-│   │   └── index.js          # Entry point
-│   └── package.json          # Node.js dependencies
-├── build.sh                  # Production build script
-├── run.sh                    # Production run script
-├── start-dev.sh              # Development mode script
-├── .env.example              # Example environment variables
-└── README.md                 # This file
-```
-
 ### Extending Functionality
 
 To add new task patterns to the command generator:
@@ -128,10 +93,7 @@ To add additional safety checks:
 1. Edit `backend/templates/risky_patterns.json` to add new risky patterns
 2. Update the `_check_dangerous_operations` method in `backend/modules/safety_checker.py`
 
-To customize the frontend:
 
-1. Modify components in `frontend/src/components/`
-2. Update themes in `frontend/src/styles/theme.js`
 
 ## License
 
