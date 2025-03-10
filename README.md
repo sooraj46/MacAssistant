@@ -20,12 +20,6 @@ MacAssistant follows a client-server architecture:
 - **Flask Backend**: Core application server handling user requests, LLM communication, plan management, command execution, safety checks, and logging
 - **LLM Integration**: Uses OpenAI API (or other providers) for plan generation and revision
 
-## Screenshots
-
-![MacAssistant Light Mode](docs/screenshot-light.png)
-![MacAssistant Dark Mode](docs/screenshot-dark.png)
-![Plan Review](docs/screenshot-plan-review.png)
-![Risky Command](docs/screenshot-risky-command.png)
 
 ## Installation
 
