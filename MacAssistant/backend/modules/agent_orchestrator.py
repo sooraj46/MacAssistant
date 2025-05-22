@@ -45,8 +45,26 @@ class AgentOrchestrator:
         # Get the plan
         plan = self.llm_integration.get_plan(plan_id)
         if not plan:
-            self.logger.log_error(f"Plan with ID {plan_id} not found")
-            print(f"DEBUG: Plan with ID {plan_id} not found")
+            self.logger.log_error(f"Plan with ID {plan_id} not found (returned None by get_plan)")
+            print(f"DEBUG: Plan with ID {plan_id} not found (returned None by get_plan)")
+            # Emitting status update for UI consistency if plan_id was expected to be valid
+            self._emit_status_update(plan_id, { # Use plan_id even if plan is None, so UI knows which request failed
+                'event': 'plan_execution_failed',
+                'status': 'error', # Explicitly set status
+                'steps': [], # No steps to show
+                'reason': f"Plan with ID {plan_id} could not be retrieved or loaded."
+            })
+            return
+
+        # Check if the retrieved plan object itself indicates an error state from generation/parsing
+        if plan.get('status') == 'error' or 'error' in plan:
+            self.logger.log_error(f"Attempted to execute an invalid or error-state plan with ID {plan_id}. Error: {plan.get('error', 'Unknown error in plan data')}")
+            self._emit_status_update(plan_id, {
+                'event': 'plan_execution_failed',
+                'status': 'error',
+                'steps': plan.get('steps', []), # Show steps if available, even in error
+                'reason': f"Plan data is invalid or indicates a previous error: {plan.get('error', 'Unknown error in plan data')}"
+            })
             return
         
         # Debug output for plan details
@@ -58,75 +76,208 @@ class AgentOrchestrator:
         
         # Begin execution of the first step
         self._execute_step(plan_id, 0)
-    
-    def _execute_step(self, plan_id, step_index):
+
+    # --- _execute_step Refactoring Helpers ---
+    def _prepare_step_command(self, plan_id, step_index, step):
         """
-        Execute a single step in a plan.
-        
-        Args:
-            plan_id (str): The ID of the plan
-            step_index (int): The index of the step to execute
+        Prepares the command for the current step.
+        Returns the command string, or None if preparation fails and error handled.
         """
-        # Debug output
-        print(f"DEBUG: Executing step {step_index} of plan {plan_id}")
+        command = step.get('command')
+        if command: # Command already exists in the plan
+            print(f"DEBUG: Using command from plan: '{command}'")
+            return command
+
+        description = step.get('description', "No description provided.")
+        if step.get('is_observe', False): # Observation step, create placeholder command
+            print(f"DEBUG: Step is observation: '{description}'")
+            command = f"echo 'Observation step: {description}'" 
+            step['command'] = command # Store placeholder command back into the step
+            return command
         
-        # Get the plan
-        plan = self.active_plans.get(plan_id)
-        if not plan:
-            self.logger.log_error(f"Plan with ID {plan_id} not found")
-            print(f"DEBUG: Plan with ID {plan_id} not found during step execution")
-            return
-        
-        # Check if all steps are complete
-        if step_index >= len(plan['steps']):
-            print(f"DEBUG: All steps completed for plan {plan_id}")
-            self._complete_plan(plan_id)
-            return
-        
-        # Get the current step
-        step = plan['steps'][step_index]
-        print(f"DEBUG: Current step details: {step}")
-        
-        # Update step status
-        step['status'] = 'executing'
-        self._emit_status_update(plan_id)
-        
-        # Check if we have a command in the step already (from LLM-generated plan)
-        if 'command' in step and step['command']:
-            command = step['command']
-            print(f"DEBUG: Using command from LLM-generated plan: '{command}'")
-        else:
-            # Generate command from description as fallback
-            description = step['description']
-            
-            # Check if this is an observation step
-            is_observe = step.get('is_observe', False) or any(word in description.lower() for word in ["observe", "note", "check the output", "examine"]) and not any(cmd in description.lower() for cmd in ["run", "type", "execute", "create"])
-            
-            if is_observe:
-                print(f"DEBUG: Step appears to be an observation step without command: '{description}'")
-                # For observation steps, just echo a confirmation
-                command = f"echo 'Step completed: {description}'"
-            else:
-                # Regular command generation
-                print(f"DEBUG: Generating command for description: '{description}'")
-                command = self.command_generator.generate_command(description)
-                
-            step['command'] = command
-            
-        print(f"DEBUG: Final command to execute: '{command}'")
-        
-        # Check command safety explicitly
+        # Command is missing for a non-observation step. This is an issue with plan generation.
+        self.logger.log_error(f"Command missing for non-observation step in plan {plan_id}, step {step_index}: {description}.")
+        self._handle_step_execution_error(plan_id, step_index, f"Command missing for critical non-observation step: {description}")
+        return None # Indicate failure to prepare command
+
+    def _check_command_safety_and_proceed(self, plan_id, step_index, step, command):
+        """
+        Checks command safety and then either calls _execute_command_internal 
+        or handles the unsafe command scenario.
+        """
         if not self.safety_checker.is_safe(command):
             self.logger.log_error(f"Unsafe command detected: {command}")
-            step['status'] = 'blocked'
+            step['status'] = 'blocked' # Update step status
             self._emit_status_update(plan_id, {
                 'event': 'unsafe_command_blocked',
                 'command': command,
-                'step_description': step['description']
+                'step_description': step.get('description', 'N/A')
+            })
+            # Execution stops here for this step; user intervention is required.
+            return
+        
+        # If safe, proceed to internal execution logic
+        self._execute_command_internal(plan_id, step_index, command)
+    
+    def _execute_step(self, plan_id, step_index):
+        """Execute a single step in a plan using helper methods."""
+        print(f"DEBUG: Executing step {step_index} of plan {plan_id}")
+        try:
+            plan = self.active_plans.get(plan_id)
+            if not plan:
+                self.logger.log_error(f"Plan with ID {plan_id} not found for _execute_step")
+                self._emit_status_update(plan_id, {
+                    'event': 'plan_execution_error', 'status': 'error',
+                    'reason': f"Active plan {plan_id} disappeared during execution."
+                })
+                return
+            
+            if step_index >= len(plan.get('steps', [])):
+                print(f"DEBUG: All steps completed for plan {plan_id}")
+                self._complete_plan(plan_id)
+                return
+            
+            step = plan['steps'][step_index]
+            if not isinstance(step, dict):
+                self.logger.log_error(f"Step {step_index} in plan {plan_id} is not a valid dictionary. Step data: {step}")
+                self._handle_step_execution_error(plan_id, step_index, "Invalid step data encountered.")
+                return
+
+            print(f"DEBUG: Current step details: {step}")
+            step['status'] = 'executing' # Mark step as executing
+            self._emit_status_update(plan_id) # Emit early status update
+            
+            command = self._prepare_step_command(plan_id, step_index, step)
+            if command is None: # Error already handled by _prepare_step_command
+                return 
+            
+            print(f"DEBUG: Final command to execute: '{command}'")
+            self._check_command_safety_and_proceed(plan_id, step_index, step, command)
+
+        except KeyError as e:
+            self.logger.log_error(f"Missing key in plan/step data during _execute_step for plan {plan_id}, step {step_index}: {str(e)}")
+            self._handle_step_execution_error(plan_id, step_index, f"Data integrity issue: missing key {str(e)}")
+        except TypeError as e:
+            self.logger.log_error(f"Type error in plan/step data during _execute_step for plan {plan_id}, step {step_index}: {str(e)}")
+            self._handle_step_execution_error(plan_id, step_index, f"Data integrity issue: type error {str(e)}")
+        except Exception as e:
+            self.logger.log_critical(f"Unexpected critical error in _execute_step for plan {plan_id}, step {step_index}: {str(e)}")
+            self._handle_step_execution_error(plan_id, step_index, f"Unexpected critical error: {str(e)}")
+
+    # --- _execute_command_internal Refactoring Helpers ---
+    def _handle_pending_user_confirmation(self, plan_id, step_index, step, command):
+        """
+        Manages logic for steps requiring user confirmation.
+        Returns True if confirmation is pending, False otherwise.
+        """
+        # Check if the step itself needs confirmation or if the entire plan requires it.
+        plan = self.active_plans.get(plan_id, {}) # Get plan or empty dict if not found
+        if step.get('needs_user_confirmation', False) or plan.get('human_confirmation_required', False):
+            command_id = f"{plan_id}_{step_index}"
+            self.pending_commands[command_id] = {
+                'plan_id': plan_id, 'step_index': step_index, 'command': command
+            }
+            step['status'] = 'awaiting_confirmation'
+            self._emit_status_update(plan_id, {
+                'event': 'user_confirmation_required', 'command_id': command_id,
+                'step_index': step_index, 'command': command, 
+                'description': step.get('description', 'N/A')
+            })
+            return True # Confirmation is pending
+        return False # No confirmation needed
+
+    def _perform_and_log_execution(self, command):
+        """Wraps command execution and its try-except block."""
+        try:
+            success, stdout, stderr = self.execution_engine.execute(command)
+        except Exception as e:
+            self.logger.log_error(f"Exception during command execution: {command}. Error: {str(e)}")
+            return False, "", f"Command execution failed with an internal error: {str(e)}"
+        return success, stdout, stderr
+
+    def _verify_step_execution_with_llm(self, step, command, success, stdout, stderr):
+        """
+        Calls LLM for verification and handles its response.
+        Returns (verification_result_dict, llm_verified_success_bool).
+        """
+        verification_result = self.llm_integration.verify_execution_result(
+            step.get('description', 'N/A'), command, stdout, stderr, success
+        )
+        
+        llm_verified_success = success # Default to raw command success
+        if 'error' in verification_result: # LLM verification itself had an error
+            self.logger.log_error(f"LLM verification failed for command '{command}': {verification_result['error']}")
+            # Fallback to raw command success; error from verification_result is logged.
+        else: # LLM verification successful, use its opinion
+            llm_verified_success = verification_result.get('success', success)
+            
+        return verification_result, llm_verified_success
+
+    def _process_successful_step(self, plan_id, step_index, step, stdout, stderr, verification_result):
+        """Handles all actions for a successfully completed step."""
+        plan = self.active_plans.get(plan_id)
+        if not plan: return 
+
+        step.update({
+            'status': 'completed', 'stdout': stdout, 'stderr': stderr, 
+            'verification': verification_result
+        })
+        self.logger.log_command_success(plan_id, step_index, stdout, stderr)
+        
+        if 'step_results' not in plan: plan['step_results'] = {}
+        plan['step_results'][str(step.get('number'))] = {
+            'status': 'completed', 'stdout': stdout, 'stderr': stderr, 
+            'verification': verification_result
+        }
+        
+        self._emit_status_update(plan_id, {
+            'event': 'step_completed', 'step_index': step_index,
+            'stdout': stdout, 'stderr': stderr, 'verification': verification_result
+        })
+        self._emit_status_update(plan_id, {
+            'event': 'step_completed_feedback', 'step_index': step_index,
+            'description': step.get('description', 'N/A'), 'stdout': stdout,
+            'explanation': verification_result.get('explanation', '') if 'error' not in verification_result else 'Could not get LLM explanation.',
+            'continue_automatically': not active_config.HUMAN_VALIDATION_REQUIRED
+        })
+
+        self._summarize_and_update_plan(plan_id, step_index)
+        
+        if active_config.HUMAN_VALIDATION_REQUIRED: return
+        if step.get('is_observe', False):
+            self._emit_status_update(plan_id, {
+                'event': 'observation_required', 'step_index': step_index,
+                'description': step.get('description', 'N/A'), 'stdout': stdout
             })
             return
-        # Execute command directly
-        self._execute_command_internal(plan_id, step_index, command)
+        self._execute_step(plan_id, step_index + 1)
+
+    def _process_failed_step(self, plan_id, step_index, step, stdout, stderr, verification_result):
+        """Handles all actions for a failed step."""
+        plan = self.active_plans.get(plan_id)
+        if not plan: return
+
+        step.update({
+            'status': 'failed', 'stdout': stdout, 'stderr': stderr,
+            'verification': verification_result
+        })
+        self.logger.log_command_failure(plan_id, step_index, stdout, stderr)
+
+        if 'step_results' not in plan: plan['step_results'] = {}
+        plan['step_results'][str(step.get('number'))] = {
+            'status': 'failed', 'stdout': stdout, 'stderr': stderr,
+            'verification': verification_result
+        }
+        
+        self._emit_status_update(plan_id, {
+            'event': 'step_failed', 'step_index': step_index,
+            'stdout': stdout, 'stderr': stderr, 'verification': verification_result
+        })
+        self._emit_status_update(plan_id, {
+            'event': 'step_failure_options', 'step_index': step_index,
+            'verification': verification_result,
+            'suggestion': verification_result.get('suggestion', '') if 'error' not in verification_result else 'Could not get LLM suggestion.'
+        })
     
     def execute_command(self, command_id):
         """
@@ -184,170 +335,55 @@ class AgentOrchestrator:
         self._execute_step(plan_id, step_index + 1)
     
     def _execute_command_internal(self, plan_id, step_index, command):
-        """
-        Internal method to execute a command.
-        
-        Args:
-            plan_id (str): The ID of the plan
-            step_index (int): The index of the step
-            command (str): The command to execute
-        """
-        # Get the plan
+        """Internal method to execute a command using helper methods."""
         plan = self.active_plans.get(plan_id)
         if not plan:
-            self.logger.log_error(f"Plan with ID {plan_id} not found")
+            self.logger.log_error(f"Plan with ID {plan_id} not found for _execute_command_internal")
             return
         
-        # Get the step
+        # Ensure step is valid before proceeding
+        if not (0 <= step_index < len(plan.get('steps', [])) and isinstance(plan['steps'][step_index], dict)):
+            self.logger.log_error(f"Invalid step at index {step_index} for plan {plan_id} in _execute_command_internal.")
+            self._handle_step_execution_error(plan_id, step_index, "Invalid step data encountered before command execution.")
+            return
         step = plan['steps'][step_index]
-        
-        # Debug - Print current step description
-        print(f"DEBUG: Executing step: {step['description']}")
+
+        print(f"DEBUG: Executing step: {step.get('description', 'N/A')}")
         print(f"DEBUG: Generated command: {command}")
-        
-        # Log the command execution
         self.logger.log_command_execution(plan_id, step_index, command)
         
-        # Before executing, check if this needs human validation first
-        if step.get('needs_user_confirmation', False) or plan.get('human_confirmation_required', False):
-            # Store command information for later execution
-            command_id = f"{plan_id}_{step_index}"
-            self.pending_commands[command_id] = {
-                'plan_id': plan_id,
-                'step_index': step_index,
-                'command': command
-            }
-            
-            # Update step status
-            step['status'] = 'awaiting_confirmation'
-            
-            # Emit status update to prompt for confirmation
-            self._emit_status_update(plan_id, {
-                'event': 'user_confirmation_required',
-                'command_id': command_id,
-                'step_index': step_index,
-                'command': command,
-                'description': step['description']
-            })
-            return
+        if self._handle_pending_user_confirmation(plan_id, step_index, step, command):
+            return # Execution pauses if confirmation is pending
+
+        success, stdout, stderr = self._perform_and_log_execution(command)
         
-        # Execute the command
-        success, stdout, stderr = self.execution_engine.execute(command)
-        
-        # Debug - Print command execution results
+        # If _perform_and_log_execution itself led to an internal error, 'success' will be False
+        # and 'stderr' will contain the internal error message.
+        # The step status might have been set to 'failed' already if an exception occurred there.
+        # This check is to ensure we handle it correctly if the step status was set by the exception.
+        if not success and "Command execution failed with an internal error" in stderr:
+            # The _perform_and_log_execution already logged the core error.
+            # We need to ensure the step reflects this failure and the orchestrator stops or processes failure.
+            step['status'] = 'failed' # Ensure it's marked
+            # The verification_result will be based on this failure.
+            # Fall through to _verify_step_execution_with_llm, which will get success=False.
+            pass
+
+
         print(f"DEBUG: Command execution success: {success}")
         print(f"DEBUG: stdout: {stdout}")
         print(f"DEBUG: stderr: {stderr}")
         
-        # Use LLM to verify the result
-        verification = self.llm_integration.verify_execution_result(
-            step['description'],
-            command,
-            stdout,
-            stderr,
-            success
-        )
+        verification_result, llm_verified_success = self._verify_step_execution_with_llm(step, command, success, stdout, stderr)
         
-        # Store verification result with step
-        step['verification'] = verification
-        
-        # Update step status based on LLM verification (not just return code)
-        llm_success = verification.get('success', success)
-        
-        if llm_success:
-            step['status'] = 'completed'
-            step['stdout'] = stdout
-            step['stderr'] = stderr
-            
-            # Log success
-            self.logger.log_command_success(plan_id, step_index, stdout, stderr)
-            
-            # Store execution results for possible plan revision
-            if not 'step_results' in plan:
-                plan['step_results'] = {}
-                
-            plan['step_results'][str(step['number'])] = {
-                'status': 'completed',
-                'stdout': stdout,
-                'stderr': stderr,
-                'verification': verification
-            }
-            
-            # Emit status update with verification
-            self._emit_status_update(plan_id, {
-                'event': 'step_completed',
-                'step_index': step_index,
-                'stdout': stdout,
-                'stderr': stderr,
-                'verification': verification
-            })
-            
-            # Always show the result to the user and ask to continue
-            # This makes the system more conversational and human-in-loop
-            self._emit_status_update(plan_id, {
-                'event': 'step_completed_feedback',
-                'step_index': step_index,
-                'description': step['description'],
-                'stdout': stdout,
-                'explanation': verification.get('explanation', ''),
-                'continue_automatically': not active_config.HUMAN_VALIDATION_REQUIRED
-            })
-
-            self._summarize_and_update_plan(plan_id, step_index)
-            
-            # If human validation is required globally, don't auto-continue
-            if active_config.HUMAN_VALIDATION_REQUIRED:
-                return
-                
-            # Check if we need to pause for user observation
-            if step.get('is_observe', False):
-                # Emit an event for the UI to display observation prompt
-                self._emit_status_update(plan_id, {
-                    'event': 'observation_required',
-                    'step_index': step_index,
-                    'description': step['description'],
-                    'stdout': stdout
-                })
-                # We'll continue when the user confirms observation is done
-                return
-            
-            # Move to the next step
-            self._execute_step(plan_id, step_index + 1)
+        if llm_verified_success:
+            self._process_successful_step(plan_id, step_index, step, stdout, stderr, verification_result)
         else:
-            step['status'] = 'failed'
-            step['stdout'] = stdout
-            step['stderr'] = stderr
-            
-            # Log failure
-            self.logger.log_command_failure(plan_id, step_index, stdout, stderr)
-            
-            # Store execution results for plan revision
-            if not 'step_results' in plan:
-                plan['step_results'] = {}
-                
-            plan['step_results'][str(step['number'])] = {
-                'status': 'failed',
-                'stdout': stdout,
-                'stderr': stderr,
-                'verification': verification
-            }
-            
-            # Emit status update with verification and suggestion
-            self._emit_status_update(plan_id, {
-                'event': 'step_failed',
-                'step_index': step_index,
-                'stdout': stdout,
-                'stderr': stderr,
-                'verification': verification
-            })
-            
-            # Don't auto-repair, ask the user first
-            self._emit_status_update(plan_id, {
-                'event': 'step_failure_options',
-                'step_index': step_index,
-                'verification': verification,
-                'suggestion': verification.get('suggestion', '')
-            })
+            # Preserve original stderr from command execution if LLM verification failed internally
+            effective_stderr = stderr
+            if 'error' in verification_result and not stderr: # If command had no stderr, but verification failed
+                effective_stderr = f"LLM Verification Error: {verification_result.get('error', 'Unknown verification error')}"
+            self._process_failed_step(plan_id, step_index, step, stdout, effective_stderr, verification_result)
     
     def _summarize_and_update_plan(self, plan_id, completed_step_index):
         """
@@ -366,24 +402,35 @@ class AgentOrchestrator:
         remaining_steps = plan['steps'][completed_step_index + 1:]
 
         # Call a new method in llm_integration that returns a summary + updated steps
-        # Something like: summary, updated_steps = self.llm_integration.summarize_progress_and_update_plan(steps_so_far, step_results, remaining_steps)
-        summary, updated_steps = self.llm_integration.summarize_progress_and_update_plan(steps_so_far, step_results, remaining_steps)
+        summary_text, updated_steps_list = self.llm_integration.summarize_progress_and_update_plan(steps_so_far, step_results, remaining_steps)
+
+        # Check if summarize_progress_and_update_plan itself had an issue (e.g. returned its own error structure)
+        # Assuming it returns a tuple (summary_string, steps_list_or_error_dict)
+        # For now, the current llm_integration.summarize_progress_and_update_plan returns (summary_text, steps_list)
+        # where summary_text can indicate an error.
+        if "Could not parse summary" in summary_text and not updated_steps_list: # Heuristic for error
+             self.logger.log_error(f"Failed to summarize and update plan {plan_id}. LLM summary: {summary_text}")
+             # Potentially emit an event that summarization failed, but don't alter the plan.
+             self._emit_status_update(plan_id, {
+                'event': 'progress_summarization_failed',
+                'summary': summary_text
+             })
+             return
 
         # Store the summary in the plan if you like
-        plan['progress_summary'] = summary
+        plan['progress_summary'] = summary_text
 
-        # If updated_steps is not None, it means the LLM is giving new instructions for the next steps
-        if updated_steps:
+        # If updated_steps is not None and not an error indicator, it means the LLM is giving new instructions
+        if updated_steps_list: # updated_steps_list should be a list of step dicts
             # Overwrite the plan’s next steps
-            # e.g., if updated_steps is a full steps list, replace everything from completed_step_index + 1 onward
-            new_plan_steps = plan['steps'][:completed_step_index + 1] + updated_steps
+            new_plan_steps = plan['steps'][:completed_step_index + 1] + updated_steps_list
             plan['steps'] = new_plan_steps
 
         # Optionally emit a status update so the UI can see the new plan
         self._emit_status_update(plan_id, {
             'event': 'progress_summarized',
-            'summary': summary,
-            'updated_steps': updated_steps
+            'summary': summary_text,
+            'updated_steps': updated_steps_list # Send the actual list received
         })
 
     def request_revision(self, plan_id, feedback, auto_revision=False):
@@ -410,27 +457,40 @@ class AgentOrchestrator:
         
         # Request a revised plan with execution results
         step_results = plan.get('step_results', {})
-        revised_plan = self.llm_integration.revise_plan(plan_id, feedback, step_results)
+        revised_plan_data = self.llm_integration.revise_plan(plan_id, feedback, step_results)
         
+        if 'error' in revised_plan_data or not revised_plan_data.get('id'):
+            self.logger.log_error(f"Plan revision failed for plan {plan_id}. Error: {revised_plan_data.get('error', 'Unknown revision error')}")
+            # Restore original plan status if it was 'revising'
+            plan['status'] = 'execution_halted_awaiting_revision_failure' # Or some other appropriate status
+            self._emit_status_update(plan_id, {
+                'event': 'plan_revision_failed',
+                'original_plan_id': plan_id,
+                'error': revised_plan_data.get('error', 'Unknown revision error')
+            })
+            return None # Indicate revision failure
+
         # Remove the old plan from active plans
-        del self.active_plans[plan_id]
+        # (Only if the new plan ID is different, though revise_plan typically creates a new ID)
+        if plan_id in self.active_plans: # Check if it wasn't already removed or replaced
+             del self.active_plans[plan_id]
         
         # Add the revised plan
-        self.active_plans[revised_plan['id']] = revised_plan
+        self.active_plans[revised_plan_data['id']] = revised_plan_data
         
         # Include the revision summary in the update
-        revision_summary = revised_plan.get('revision_summary', 'Plan was revised')
+        revision_summary = revised_plan_data.get('revision_summary', 'Plan was revised')
         
         # Emit status update
-        self._emit_status_update(revised_plan['id'], {
+        self._emit_status_update(revised_plan_data['id'], {
             'event': 'plan_revised',
             'original_plan_id': plan_id,
-            'revised_plan_id': revised_plan['id'],
+            'revised_plan_id': revised_plan_data['id'],
             'is_auto_revision': auto_revision,
             'revision_summary': revision_summary
         })
         
-        return revised_plan
+        return revised_plan_data
     
     def abort_execution(self, plan_id):
         """
@@ -679,6 +739,29 @@ class AgentOrchestrator:
                 'feedback': feedback
             })
     
+    def _handle_step_execution_error(self, plan_id, step_index, error_message):
+        """Helper to manage step failure due to internal errors."""
+        plan = self.active_plans.get(plan_id)
+        if plan and 0 <= step_index < len(plan.get('steps',[])):
+            step = plan['steps'][step_index]
+            if isinstance(step, dict): # Ensure step is a dict before updating
+                step['status'] = 'failed'
+                step['stderr'] = error_message
+        
+        self.logger.log_error(f"Step execution error for plan {plan_id}, step {step_index}: {error_message}")
+        self._emit_status_update(plan_id, {
+            'event': 'step_failed', # Use existing event if suitable
+            'status': 'error', # Indicate plan might be in error
+            'step_index': step_index,
+            'reason': error_message,
+            'stderr': error_message # Make it clear in UI
+        })
+        # Consider if plan status should also be 'error' or 'execution_halted'
+        if plan:
+            plan['status'] = 'error' # Mark plan as errored
+            self._emit_status_update(plan_id) # Emit overall plan status update
+
+
     def _emit_status_update(self, plan_id, additional_data=None):
         """
         Emit a status update for the given plan.
@@ -689,24 +772,33 @@ class AgentOrchestrator:
         """
         # Get the plan
         plan = self.active_plans.get(plan_id)
-        if not plan:
-            return
         
-        # Prepare update data
         update_data = {
             'plan_id': plan_id,
-            'status': plan['status'],
-            'steps': plan['steps'],
             'timestamp': time.time()
         }
+
+        if not plan:
+            # If plan is not found (e.g., after an error leading to its removal, or if plan_id is stale)
+            # still send a minimal update if additional_data specifies an event.
+            update_data['status'] = 'error'
+            update_data['reason'] = f"Plan with ID {plan_id} not found or no longer active."
+            update_data['steps'] = []
+            if additional_data:
+                update_data.update(additional_data)
+            else: # If no additional data, there's not much to send other than plan not found.
+                 # This case might be hit if _emit_status_update is called with a bad plan_id and no extra info.
+                return # Or log an error: self.logger.log_warning(f"Attempted to emit status for non-existent plan {plan_id}")
+        else:
+            # Plan exists, prepare full update data
+            update_data['status'] = plan.get('status', 'unknown') # Use .get for safety
+            update_data['steps'] = plan.get('steps', []) # Use .get for safety
         
-        # Add additional data if provided
-        if additional_data:
-            update_data.update(additional_data)
+            if additional_data:
+                update_data.update(additional_data)
         
         # Emit the update
-        if 'event' not in update_data:
-            update_data['event'] = 'execution_update'
+        
         emit('execution_update', update_data, namespace='/', broadcast=True)
 
     
