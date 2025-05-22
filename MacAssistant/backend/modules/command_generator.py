@@ -12,6 +12,7 @@ from config import active_config
 import google.genai as genai
 import google.genai.types as types
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -40,6 +41,12 @@ class CommandGenerator:
         self.use_llm = active_config.USE_LLM_COMMAND_GENERATION
         self.temperature = active_config.COMMAND_TEMPERATURE
         
+        # Initialize ThreadPoolExecutor for LLM calls within CommandGenerator
+        # It's a separate executor from the one in LLMIntegration,
+        # but can use the same configuration for number of workers and timeout.
+        self.executor = ThreadPoolExecutor(max_workers=getattr(active_config, 'LLM_MAX_WORKERS', 4))
+        logger.info(f"Initialized ThreadPoolExecutor with max_workers={self.executor._max_workers} for CommandGenerator")
+
         # Check if LLM command generation is available
         if not self.api_key:
             logger.warning("Missing GEMINI_API_KEY in configuration. LLM-based command generation will not be available.")
@@ -372,5 +379,22 @@ class CommandGenerator:
         Returns:
             str: A generated shell command
         """
-        # Run the async function in the event loop
-        return global_loop.run_until_complete(self._async_generate_command_with_llm(task_description))
+        if not self.llm_available: # Should not happen if called, but as a safeguard
+            logger.error("LLM command generation called but LLM is not available.")
+            return None
+
+        # Submit the asyncio part to the executor, using the imported global_loop
+        future = self.executor.submit(global_loop.run_until_complete, self._async_generate_command_with_llm(task_description))
+        try:
+            timeout = getattr(active_config, 'LLM_TIMEOUT', 60) # Reuse LLM_TIMEOUT from config
+            command = future.result(timeout=timeout)
+            return command
+        except TimeoutError as e:
+            logger.error(f"Timeout waiting for LLM command generation ({timeout}s): {e}")
+            # Fallback or error propagation strategy:
+            # For now, returning None, but could raise a specific error.
+            return None 
+        except Exception as e:
+            logger.exception(f"Error getting result from executor for LLM command generation: {e}")
+            # Fallback or error propagation:
+            return None
