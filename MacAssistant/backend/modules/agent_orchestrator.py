@@ -705,6 +705,8 @@ class AgentOrchestrator:
             update_data.update(additional_data)
         
         # Emit the update
+        if 'event' not in update_data:
+            update_data['event'] = 'execution_update'
         emit('execution_update', update_data, namespace='/', broadcast=True)
 
     
