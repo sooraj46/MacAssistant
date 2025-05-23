@@ -70,8 +70,8 @@ def accept_plan():
     # Log the plan acceptance
     logger.log_plan_acceptance(plan_id)
     
-    # Begin plan execution
-    agent_orchestrator.execute_plan(plan_id)
+    # Begin plan execution in a background task
+    socketio.start_background_task(agent_orchestrator.execute_plan, plan_id)
     
     return jsonify({'status': 'execution_started'})
 
